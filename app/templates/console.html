@@ -1,0 +1,2653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RPA 跨系统数据搬运与自动对账工作台</title>
+  <style>
+    :root {
+      --bg: #F5F4F0;
+      --rail: #ECEAE4;
+      --surface: #FDFCFA;
+      --subtle: #F0EEE8;
+      --border: #DCD9D0;
+      --border-strong: #C5C1B5;
+      --ink: #14181F;
+      --ink-2: #4A5260;
+      --ink-muted: #656D7A;
+      --accent: #0F52BA;
+      --accent-hover: #0A3F91;
+      --accent-active: #08306E;
+      --accent-soft: #E8EFFB;
+      --ok-ink: #0B5D3B;
+      --ok-bg: #E6F4ED;
+      --ok-bd: #B5DFCA;
+      --warn-ink: #8A4B08;
+      --warn-bg: #FDF3E1;
+      --warn-bd: #F3D39C;
+      --err-ink: #9E1C1C;
+      --err-bg: #FCE8E8;
+      --err-bd: #F5BABA;
+      --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
+      --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    ::selection {
+      background: #D6E4FF;
+      color: #08306E;
+    }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: #CBC7BC; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #B0ABA0; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .mono { font-family: var(--mono); font-size: 12.5px; }
+    .nowrap { white-space: nowrap; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    /* Shell layout */
+    .app-shell {
+      display: grid;
+      grid-template-columns: 272px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    /* Left Operational Rail */
+    .rail {
+      background: var(--rail);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 6px 18px 6px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #FDFCFA;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      line-height: 1.25;
+    }
+
+    .brand-sub {
+      font-size: 11.5px;
+      color: var(--ink-muted);
+      font-family: var(--mono);
+    }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 11px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink-2);
+      font-family: var(--sans);
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: background 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease);
+    }
+
+    .nav-btn:hover {
+      background: rgba(253, 252, 250, 0.55);
+      color: var(--ink);
+    }
+
+    .nav-btn.active {
+      background: var(--surface);
+      border-color: var(--border);
+      color: var(--accent);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(20, 24, 31, 0.04);
+    }
+
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--ink-muted);
+      background: rgba(20, 24, 31, 0.05);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .nav-btn.active .kbd {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* Quick Run Dock */
+    .run-dock {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .field-group { display: flex; flex-direction: column; gap: 4px; }
+    .field-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-2);
+    }
+
+    .input, .select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 13px;
+      transition: border-color 150ms var(--ease);
+    }
+
+    .input:hover, .select:hover { border-color: #9A9589; }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+      color: var(--ink-2);
+      padding: 2px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-row input {
+      accent-color: var(--accent);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    .toggle-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--ink-2);
+    }
+    .toggle-head input {
+      accent-color: var(--accent);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .field-hint {
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--ink-muted);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 8px 14px;
+      border-radius: 5px;
+      border: 1px solid transparent;
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease), opacity 150ms var(--ease);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #FDFCFA;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-primary:active:not(:disabled) { background: var(--accent-active); }
+
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--ink);
+      border-color: var(--border-strong);
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--subtle);
+      border-color: #9A9589;
+    }
+
+    .btn-danger-ghost {
+      background: transparent;
+      color: var(--err-ink);
+      border-color: var(--err-bd);
+    }
+    .btn-danger-ghost:hover:not(:disabled) { background: var(--err-bg); }
+
+    .btn-sm { padding: 5px 10px; font-size: 12.5px; }
+
+    .dock-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .env-foot {
+      margin-top: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      font-size: 11.5px;
+      color: var(--ink-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    /* Main Workspace */
+    .main-area {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(245, 244, 240, 0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+    }
+
+    .date-pills {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .date-pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--ink-2);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 150ms var(--ease);
+    }
+
+    .date-pill:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .date-pill.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #FDFCFA;
+      font-weight: 600;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--ink-2);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok-ink);
+    }
+    .dot.busy {
+      background: var(--accent);
+      animation: pulse 1s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    .workspace {
+      padding: 24px 28px 48px 28px;
+      max-width: 1320px;
+      width: 100%;
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* Continuous KPI Ledger Strip */
+    .kpi-ledger {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 26px;
+    }
+
+    .kpi-cell {
+      padding: 16px 18px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .kpi-cell:last-child { border-right: none; }
+
+    .kpi-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-muted);
+    }
+
+    .kpi-val {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+    .kpi-val.ok { color: var(--ok-ink); }
+    .kpi-val.err { color: var(--err-ink); }
+    .kpi-val.warn { color: var(--warn-ink); }
+
+    .kpi-sub {
+      font-size: 12px;
+      color: var(--ink-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Section Head & Filter Bar */
+    .section-block { margin-top: 28px; }
+    .section-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .section-head h2 {
+      margin: 0;
+      font-size: 15.5px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .section-meta {
+      font-size: 12.5px;
+      color: var(--ink-muted);
+      margin-left: 8px;
+      font-weight: 400;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .filter-pills {
+      display: inline-flex;
+      background: var(--rail);
+      padding: 3px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+    }
+
+    .filter-pill {
+      border: none;
+      background: transparent;
+      color: var(--ink-2);
+      font-family: var(--sans);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .filter-pill.active {
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(20, 24, 31, 0.06);
+    }
+
+    .search-input {
+      padding: 5px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 12.5px;
+      width: 190px;
+    }
+
+    /* Tables */
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      background: var(--subtle);
+      color: var(--ink-2);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--ink);
+      vertical-align: middle;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background 120ms var(--ease); }
+    tbody tr:hover { background: #F7F5F0; }
+    tbody tr.clickable { cursor: pointer; }
+    tbody tr.selected-row { background: var(--accent-soft); }
+
+    th.r, td.r { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .badge-ok { background: var(--ok-bg); color: var(--ok-ink); border-color: var(--ok-bd); }
+    .badge-warn { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-bd); }
+    .badge-err { background: var(--err-bg); color: var(--err-ink); border-color: var(--err-bd); }
+    .badge-info { background: var(--accent-soft); color: var(--accent); border-color: #C7DAFA; }
+    .badge-neutral { background: var(--subtle); color: var(--ink-2); border-color: var(--border); }
+
+    /* Inline share bar */
+    .share-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .share-track {
+      width: 64px;
+      height: 6px;
+      background: var(--subtle);
+      border-radius: 3px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .share-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+    }
+
+    /* Split Panels */
+    .split-2 {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 18px 20px;
+    }
+
+    .panel-title {
+      margin: 0 0 12px 0;
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Chart Container */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .chart-box {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 18px;
+    }
+
+    .chart-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: #14181F;
+      color: #FDFCFA;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 120ms var(--ease);
+      z-index: 10;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Summary & Feishu Card */
+    .summary-pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: var(--sans);
+      font-size: 13.5px;
+      line-height: 1.7;
+      color: var(--ink);
+    }
+
+    .download-strip {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .feishu-card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .feishu-head {
+      padding: 11px 16px;
+      color: #FDFCFA;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .feishu-head.red { background: #9E1C1C; }
+    .feishu-head.blue { background: #0F52BA; }
+    .feishu-body {
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      color: var(--ink);
+    }
+
+    /* Step Waterfall */
+    .wf-row {
+      display: grid;
+      grid-template-columns: minmax(190px, 240px) 72px 1fr 78px;
+      gap: 12px;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12.5px;
+    }
+    .wf-row:last-child { border-bottom: none; }
+    .wf-track {
+      height: 10px;
+      background: var(--subtle);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .wf-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+    }
+    .wf-bar.failed { background: var(--err-ink); }
+
+    /* Dropzone */
+    .drop-area {
+      border: 1.5px dashed var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 150ms var(--ease), background 150ms var(--ease);
+    }
+    .drop-area:hover, .drop-area.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    /* Screenshot Grid */
+    .shot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 14px;
+    }
+    .shot-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 150ms var(--ease);
+    }
+    .shot-item:hover { border-color: var(--accent); }
+    .shot-item img {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+      object-position: top;
+      display: block;
+      border-bottom: 1px solid var(--border);
+    }
+    .shot-meta {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+
+    /* Lightbox & Auth Dialog */
+    dialog {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0;
+      background: var(--surface);
+      max-width: 92vw;
+      max-height: 90vh;
+      box-shadow: 0 18px 48px rgba(20, 24, 31, 0.22);
+    }
+    dialog::backdrop {
+      background: rgba(20, 24, 31, 0.55);
+    }
+    .dlg-head {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+    }
+    .dlg-body {
+      padding: 16px;
+      overflow: auto;
+      max-height: 78vh;
+    }
+    .dlg-body img { max-width: 100%; height: auto; display: block; }
+
+    /* Toast */
+    .toast-stack {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 380px;
+    }
+    .toast {
+      background: var(--ink);
+      color: #FDFCFA;
+      padding: 11px 15px;
+      border-radius: 6px;
+      font-size: 13px;
+      box-shadow: 0 8px 24px rgba(20, 24, 31, 0.18);
+      animation: toastIn 160ms var(--ease);
+    }
+    .toast.ok { background: #0B5D3B; }
+    .toast.err { background: #9E1C1C; }
+    .toast.warn { background: #8A4B08; }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .empty-state {
+      padding: 36px 20px;
+      text-align: center;
+      color: var(--ink-muted);
+      font-size: 13.5px;
+    }
+
+    .code-box {
+      background: #1B2029;
+      color: #E6EDF5;
+      padding: 14px 16px;
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.65;
+      overflow-x: auto;
+      margin: 0;
+    }
+
+    @media (max-width: 1024px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .rail { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      .kpi-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .kpi-cell { border-bottom: 1px solid var(--border); }
+      .split-2, .charts-grid, .live-layout { grid-template-columns: 1fr; }
+    }
+
+    /* Live RPA Viewport & Action Stream */
+    .live-layout {
+      display: grid;
+      grid-template-columns: 1.45fr 0.75fr;
+      gap: 20px;
+      align-items: start;
+    }
+    .browser-frame {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .browser-chrome {
+      background: var(--rail);
+      border-bottom: 1px solid var(--border);
+      padding: 9px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .url-bar {
+      flex: 1;
+      min-width: 180px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .viewport-stage {
+      background: #E8E5DC;
+      min-height: 430px;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+    .viewport-stage img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .replay-bar {
+      background: var(--subtle);
+      border-top: 1px solid var(--border);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .action-feed {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      max-height: 540px;
+      overflow-y: auto;
+    }
+    .action-row {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      transition: background 120ms var(--ease);
+    }
+    .action-row:last-child { border-bottom: none; }
+    .action-row:hover { background: #F7F5F0; }
+    .action-row.active { background: var(--accent-soft); }
+    .action-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 11.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Left Operational Rail -->
+    <aside class="rail">
+      <div>
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18"/><path d="M7 14l4-4 4 3 5-6"/>
+            </svg>
+          </div>
+          <div>
+            <div class="brand-title">RPA 账务工作台</div>
+            <div class="brand-sub" style="font-family:var(--sans);">跨系统对账与自动填报</div>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="主导航">
+          <button class="nav-btn active" data-view="overview" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              <span>经营总览与对账</span>
+            </span>
+            <span class="kbd">1</span>
+          </button>
+          <button class="nav-btn" data-view="reports" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              <span>趋势与报表下载</span>
+            </span>
+            <span class="kbd">2</span>
+          </button>
+          <button class="nav-btn" data-view="audit" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              <span>执行记录与耗时</span>
+            </span>
+            <span class="kbd">3</span>
+          </button>
+          <button class="nav-btn" data-view="artifacts" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>手工传单与截图</span>
+            </span>
+            <span class="kbd">4</span>
+          </button>
+          <button class="nav-btn" data-view="ops" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span>系统检查与设置</span>
+            </span>
+            <span class="kbd">5</span>
+          </button>
+          <button class="nav-btn" data-view="live" type="button">
+            <span class="nav-left">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <span>机器人操作直播</span>
+            </span>
+            <span class="kbd">6</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="run-dock">
+        <div class="field-group">
+          <label class="field-label" for="job-select">自动化流程</label>
+          <select id="job-select" class="select"></select>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="run-date-input">统计哪天的数据</label>
+          <input id="run-date-input" class="input mono" type="date" />
+        </div>
+        <label class="toggle-item">
+          <div class="toggle-head">
+            <span>覆盖重跑（当天已生成时）</span>
+            <input id="chk-force" type="checkbox" />
+          </div>
+          <div class="field-hint">默认同一天仅生成 1 份，勾选后会重新抓取并覆盖</div>
+        </label>
+        <label class="toggle-item">
+          <div class="toggle-head">
+            <span>仅本地预览（不发工作群）</span>
+            <input id="chk-dry-run" type="checkbox" checked />
+          </div>
+          <div class="field-hint">开启后只生成报表和预览卡片，不会给飞书/钉钉群发消息</div>
+        </label>
+        <button id="btn-run-visual" class="btn btn-primary" type="button" title="打开可视化直播页，慢速播放机器人打开网站、填表、抓取、提交 OA 的每一步">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 7 15 10 10 13 10 7" fill="currentColor"/></svg>
+          <span>观看机器人实时操作</span>
+        </button>
+        <button id="btn-run-once" class="btn btn-secondary" type="button" title="不展示浏览器画面，在后台快速完成采集、对账与出表">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          <span id="btn-run-label">后台静默跑批</span>
+        </button>
+        <div class="dock-grid">
+          <button id="btn-backfill" class="btn btn-secondary btn-sm" type="button" title="按天自动补齐最近 7 天尚未生成的历史报表">补齐近 7 天</button>
+          <button id="btn-drill" class="btn btn-danger-ghost btn-sm" type="button" title="模拟目标系统超时故障，演示自动截图留痕与群告警功能">模拟故障截图</button>
+        </div>
+        <div class="env-foot" id="env-foot" style="font-family:var(--sans);">加载运行环境中...</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="topbar-title">经营总览与对账</h1>
+          <div class="date-pills" id="date-pills" aria-label="切换查看已生成的日期"></div>
+        </div>
+        <div class="topbar-right">
+          <div class="status-chip" id="status-chip">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-text">就绪</span>
+          </div>
+          <button id="btn-refresh" class="btn btn-secondary btn-sm" type="button" title="刷新数据">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span>刷新</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <!-- View 1: Overview & Reconciliation -->
+        <section id="view-overview" class="view active">
+          <div class="kpi-ledger" id="kpi-ledger"></div>
+
+          <div class="section-block">
+            <div class="section-head">
+              <h2>渠道投放与销售明细<span class="section-meta" id="ch-meta"></span></h2>
+              <div class="toolbar">
+                <div class="filter-pills" id="ch-filter-pills">
+                  <button class="filter-pill active" data-filter="all" type="button">全部渠道</button>
+                  <button class="filter-pill" data-filter="anomaly" type="button">仅看异常</button>
+                </div>
+                <input id="ch-search" class="search-input" type="search" placeholder="搜索渠道名称..." />
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>渠道</th>
+                    <th class="r">订单数</th>
+                    <th class="r">净销售额</th>
+                    <th>营收占比</th>
+                    <th class="r">退款率</th>
+                    <th class="r">广告消耗</th>
+                    <th class="r">ROI</th>
+                    <th class="r">日环比</th>
+                    <th>监控状态</th>
+                  </tr>
+                </thead>
+                <tbody id="ch-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-head">
+              <h2>CRM 与财务结算 PDF 自动对账差异<span class="section-meta" id="rec-meta"></span></h2>
+              <div class="toolbar">
+                <div class="filter-pills" id="rec-filter-pills">
+                  <button class="filter-pill active" data-filter="all" type="button">全部差异</button>
+                  <button class="filter-pill" data-filter="漏单" type="button">漏单</button>
+                  <button class="filter-pill" data-filter="长款" type="button">长款</button>
+                  <button class="filter-pill" data-filter="金额不符" type="button">金额不符</button>
+                </div>
+                <input id="rec-search" class="search-input" type="search" placeholder="搜索订单号或渠道..." />
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>订单号</th>
+                    <th>渠道</th>
+                    <th class="r">CRM 净额</th>
+                    <th class="r">财务结算金额</th>
+                    <th class="r">差异金额</th>
+                    <th>差异类型</th>
+                    <th>财务状态</th>
+                    <th>排查建议</th>
+                  </tr>
+                </thead>
+                <tbody id="rec-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 2: Trends & Reports -->
+        <section id="view-reports" class="view">
+          <div class="charts-grid">
+            <div class="chart-box">
+              <div class="panel-title">
+                <span>多日净销售额 vs 广告消耗走势</span>
+                <span class="mono" style="color:var(--ink-muted);font-weight:400;" id="trend-range-lbl"></span>
+              </div>
+              <div id="svg-trend-wrap" style="position:relative;"></div>
+              <div id="trend-tooltip" class="chart-tooltip"></div>
+            </div>
+            <div class="chart-box">
+              <div class="panel-title">
+                <span>每日整体投产比 (ROI) 走势（红虚线 = 预警底线）</span>
+              </div>
+              <div id="svg-roi-wrap" style="position:relative;"></div>
+              <div id="roi-tooltip" class="chart-tooltip"></div>
+            </div>
+          </div>
+
+          <div class="split-2">
+            <div class="panel">
+              <div class="panel-title">
+                <span>经营摘要与报表下载</span>
+                <button id="btn-copy-summary" class="btn btn-secondary btn-sm" type="button">复制摘要文本</button>
+              </div>
+              <pre class="summary-pre" id="summary-pre">暂无摘要数据。</pre>
+              <div class="download-strip" id="download-strip"></div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">
+                <span>群通知卡片实时预览</span>
+                <button id="btn-test-alert-inline" class="btn btn-secondary btn-sm" type="button">生成告警预览卡片</button>
+              </div>
+              <div id="feishu-preview-wrap"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 3: Audit & Step Waterfall -->
+        <section id="view-audit" class="view">
+          <div class="split-2">
+            <div>
+              <div class="section-head">
+                <h2>历史执行记录<span class="section-meta">点击任意记录，右侧查看每一步干了什么、用了多久</span></h2>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>统计日期</th>
+                      <th>执行结果</th>
+                      <th class="r">总耗时</th>
+                      <th class="r">采集记录</th>
+                      <th class="r">异常渠道</th>
+                      <th>启动时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="runs-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">
+                <span id="wf-title">执行步骤耗时明细</span>
+                <span class="mono" id="wf-meta" style="color:var(--ink-muted);font-weight:400;"></span>
+              </div>
+              <div id="wf-body"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 4: Screenshots & Dropzone -->
+        <section id="view-artifacts" class="view">
+          <div class="split-2">
+            <div class="panel">
+              <div class="panel-title">
+                <span>手工上传补录单据</span>
+                <span style="font-size:12px;color:var(--ink-muted);font-weight:400;">支持 Excel / CSV / PDF</span>
+              </div>
+              <div id="drop-area" class="drop-area" tabindex="0" role="button" aria-label="上传手工单据文件">
+                <div style="font-weight:600;color:var(--ink);margin-bottom:4px;">拖拽文件到此处，或点击选择上传</div>
+                <div style="font-size:12.5px;color:var(--ink-muted);">如果有部分数据未联网抓取，可在此上传表格，下次执行会自动并入汇总与对账（上限 25MB）</div>
+                <input id="drop-file-input" type="file" accept=".csv,.xlsx,.xls,.pdf" style="display:none;" />
+              </div>
+              <div class="table-wrap" style="margin-top:14px;">
+                <table>
+                  <thead>
+                    <tr><th>文件名</th><th class="r">大小</th><th>上传时间</th><th class="r">操作</th></tr>
+                  </thead>
+                  <tbody id="drop-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">
+                <span>异常故障自动截图留痕</span>
+                <span class="mono" style="color:var(--ink-muted);font-weight:400;" id="shot-count"></span>
+              </div>
+              <div id="shot-grid" class="shot-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 5: Doctor & Ops -->
+        <section id="view-ops" class="view">
+          <div class="split-2">
+            <div>
+              <div class="section-head">
+                <h2>系统运行环境检查</h2>
+                <button id="btn-run-doctor" class="btn btn-secondary btn-sm" type="button">重新检查</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>检查项目</th><th>状态</th><th>说明信息</th></tr>
+                  </thead>
+                  <tbody id="doctor-tbody"></tbody>
+                </table>
+              </div>
+
+              <div class="section-block">
+                <div class="section-head">
+                  <h2>已接入的自动采集渠道</h2>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>数据来源</th><th>自动采集方式</th><th>负责统计内容</th><th>开关状态</th></tr>
+                    </thead>
+                    <tbody id="sources-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:20px;">
+              <div class="panel">
+                <div class="panel-title"><span>磁盘空间与历史文件清理</span></div>
+                <div id="storage-bars"></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
+                  <button id="btn-clean-dry" class="btn btn-secondary btn-sm" type="button">查看可清理文件</button>
+                  <button id="btn-clean-exec" class="btn btn-primary btn-sm" type="button">立即清理过期文件</button>
+                  <button id="btn-backup-db" class="btn btn-secondary btn-sm" type="button">备份历史记录库</button>
+                  <button id="btn-test-alert-ops" class="btn btn-secondary btn-sm" type="button">生成群告警预览</button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title"><span>技术人员维护命令（日常使用无需操作）</span></div>
+                <pre class="code-box"># 首次在真实系统扫码/滑块登录并保存登录状态：
+python main.py auth-login --site my_erp --url https://erp.example.com/login
+
+# 在本地桌面直接弹出 Chrome 窗口慢放观看每一步操作：
+python main.py run-once --force --watch --fresh-login
+
+# 在终端检查生产环境依赖：
+python main.py doctor</pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 6: Live RPA Operation Viewport & Replay -->
+        <section id="view-live" class="view">
+          <div class="section-head" style="margin-bottom:14px;">
+            <h2>RPA 机器人实时操作画面与回放<span class="section-meta" id="live-meta">点击左侧「观看机器人实时操作」，即可直观看到登录填密、翻页抓表、下载 PDF 与提交 OA 日报的全过程</span></h2>
+            <div class="toolbar">
+              <label class="toggle-row" style="gap:8px;font-size:12.5px;" title="勾选后每次都从登录页重新填写账号密码；取消则尝试复用已记住的登录状态直接进后台">
+                <input id="chk-fresh-login" type="checkbox" checked />
+                <span>从登录页完整演示（重新输账密）</span>
+              </label>
+              <button id="btn-start-live-inline" class="btn btn-primary btn-sm" type="button">开始观看操作直播</button>
+            </div>
+          </div>
+
+          <div class="live-layout">
+            <div class="browser-frame">
+              <div class="browser-chrome">
+                <span id="live-status-badge" class="badge badge-neutral">等待启动</span>
+                <div class="url-bar" id="live-url-bar">等待机器人打开浏览器...</div>
+                <span class="mono" id="live-elapsed" style="color:var(--ink-muted);">0.0s</span>
+              </div>
+              <div class="viewport-stage" id="live-stage">
+                <div class="empty-state" id="live-empty">
+                  点击右上角「开始观看操作直播」或左侧「观看机器人实时操作」，即可实时看到机器人自动填入账密、点击导出、翻页抓取、下载财务 PDF 并填报 OA 审批单的每一步画面。
+                </div>
+                <img id="live-img" style="display:none;" alt="RPA 浏览器实时操作画面" />
+              </div>
+              <div class="replay-bar">
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <button id="btn-replay-prev" class="btn btn-secondary btn-sm" type="button">上一步</button>
+                  <button id="btn-replay-play" class="btn btn-secondary btn-sm" type="button">自动播放回放</button>
+                  <button id="btn-replay-next" class="btn btn-secondary btn-sm" type="button">下一步</button>
+                </div>
+                <span class="mono" id="live-frame-counter" style="color:var(--ink-2);">0 / 0</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="panel-title" style="margin-bottom:8px;">
+                <span>机器人每步动作记录</span>
+                <span style="font-size:12px;color:var(--ink-muted);font-weight:400;">点击任意一步可查看当时画面</span>
+              </div>
+              <div class="action-feed" id="live-action-feed">
+                <div class="empty-state">暂无操作记录，启动直播后将在此逐条滚动显示。</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <dialog id="shot-dialog">
+    <div class="dlg-head">
+      <span id="dlg-shot-title" class="mono">screenshot.png</span>
+      <button id="dlg-shot-close" class="btn btn-secondary btn-sm" type="button">关闭</button>
+    </div>
+    <div class="dlg-body">
+      <img id="dlg-shot-img" alt="失败现场全页截图" />
+    </div>
+  </dialog>
+
+  <!-- Auth Gate Modal -->
+  <dialog id="auth-dialog">
+    <div class="dlg-head">
+      <span>RPA 控制台访问验证</span>
+    </div>
+    <div class="dlg-body" style="width:360px;">
+      <form id="auth-form" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="field-group">
+          <label class="field-label" for="auth-pwd">控制台访问口令 (DASHBOARD_PASSWORD)</label>
+          <input id="auth-pwd" class="input" type="password" required autocomplete="current-password" />
+        </div>
+        <div id="auth-err" style="color:var(--err-ink);font-size:12.5px;display:none;"></div>
+        <button class="btn btn-primary" type="submit">验证进入</button>
+      </form>
+    </div>
+  </dialog>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      data: null,
+      selectedJob: null,
+      selectedDate: null,
+      selectedRunId: null,
+      chFilter: "all",
+      chSearch: "",
+      recFilter: "all",
+      recSearch: "",
+      busy: false,
+      timerHandle: null,
+      liveSession: null,
+      liveSelectedIdx: -1,
+      livePollHandle: null,
+      replayHandle: null,
+    };
+
+    const VIEW_TITLES = {
+      overview: "经营总览与对账",
+      reports: "趋势与报表下载",
+      audit: "执行记录与耗时",
+      artifacts: "手工传单与截图",
+      ops: "系统检查与设置",
+      live: "机器人操作直播",
+    };
+
+    const JOB_LABELS = {
+      daily_ops_report: "每日全渠道对账与 OA 日报",
+    };
+
+    const RUN_STATUS_LABELS = {
+      SUCCESS: "成功",
+      FAILED: "失败",
+      SKIPPED: "已跳过（已有结果）",
+      LOCKED: "运行中（防并发锁）",
+      RUNNING: "执行中",
+    };
+
+    const STEP_LABELS = {
+      collect_crm_orders: "抓取 CRM 销售订单",
+      collect_ads_spend: "抓取广告投放消耗",
+      collect_finance_spa: "下载并解析财务结算单 (PDF)",
+      collect_local_drop: "读取手工上传补录单据",
+      collect_mail_attachments: "收取企业邮箱附件单据",
+      etl_and_reconcile: "数据汇总与三方自动对账",
+      render_reports: "生成 Excel 日报与 Word 周报",
+      submit_oa_report: "自动登录 OA 填写并提交日报",
+      notify: "推送工作群卡片与邮件通知",
+      simulate_failure_drill: "模拟系统故障与自动截图留痕",
+      error: "异常中断与自动留痕截图",
+    };
+
+    const FIN_STATUS_LABELS = {
+      SETTLED: "已结算",
+      PENDING: "待财务审核",
+      REFUNDED: "已退款",
+      DISPUTED: "争议核查中",
+      FEE_ADJUSTED: "扣减平台/通道费",
+      UNMATCHED: "财务多出未匹配",
+      PARTIAL: "部分入账",
+      MISSING: "财务未入账",
+      "-": "暂无记录",
+    };
+
+    const DOCTOR_STATUS_LABELS = {
+      OK: "正常",
+      WARN: "待注意",
+      ERROR: "异常",
+      INFO: "未启用",
+    };
+
+    const SOURCE_ID_LABELS = {
+      crm_orders: "CRM 客户订单后台",
+      ads_spend: "广告投放数据后台",
+      finance_spa: "财务结算与回款中心",
+      mail_attachments: "企业邮箱自动收件",
+      local_drop: "手工上传单据区",
+    };
+
+    const CONNECTOR_LABELS = {
+      mock_crm: "网页自动登录导出表格",
+      mock_ads: "网页自动登录翻页抓取",
+      mock_finance: "后台接口采集 + PDF 自动解析",
+      imap_mail: "自动读取邮箱每日附件",
+      local_drop: "读取工作台手工上传的文件",
+    };
+
+    const ROLE_LABELS = {
+      orders: "统计订单成交与退款",
+      ads: "统计各渠道广告花费",
+      finance: "核对财务实际入账",
+      extra_cost: "补充额外手工费用",
+    };
+
+    const LIVE_ACTION_LABELS = {
+      GOTO: "打开网页",
+      FILL: "自动填表",
+      SELECT: "下拉选择",
+      CLICK: "点击按钮",
+      UPLOAD: "上传附件",
+      READ: "读取数据",
+      WAIT: "等待生成",
+      COMPUTE: "汇总对账",
+      RENDER: "生成报表",
+      SUBMIT: "提交成功",
+      NOTIFY: "发送通知",
+      ERROR: "发生异常",
+    };
+
+    const TARGET_ELEMENT_LABELS = {
+      'input[name="username"]': "账号输入框",
+      'input[name="password"]': "密码输入框",
+      "#crm-login-btn": "CRM 登录按钮",
+      "#crm-orders-table": "CRM 订单明细表",
+      "#export-csv-btn": "「导出 CSV 订单」按钮",
+      "#ads-login-btn": "广告后台登录按钮",
+      "#ads-table": "广告投放数据表",
+      "#next-page": "「下一页」翻页按钮",
+      "#finance-login-btn": "财务中心登录按钮",
+      "#finance-table": "财务结算流水表",
+      "#start-export-btn": "「生成财务结算 PDF」按钮",
+      "#download-pdf-btn": "「下载结算单 PDF」链接",
+      "#oa-login-btn": "OA 系统登录按钮",
+      "#oa-biz-date": "「业务日期」输入框",
+      "#oa-total-orders": "「成交订单数」输入框",
+      "#oa-net-sales": "「全渠道净销售额」输入框",
+      "#oa-ad-spend": "「广告总消耗」输入框",
+      "#oa-overall-roi": "「整体投产比 (ROI)」输入框",
+      "#oa-diff-count": "「对账异常笔数」输入框",
+      "#oa-risk-level": "「风险等级」下拉框",
+      "#oa-summary-note": "「经营摘要说明」文本框",
+      "#oa-report-file": "「Excel 日报附件」上传框",
+      "#oa-submit-btn": "「确认提交日报」按钮",
+      "#oa-ticket-id": "OA 审批回执单号",
+      run_etl: "本地对账清洗引擎",
+    };
+
+    function formatCronHuman(cron) {
+      const parts = String(cron || "").trim().split(/\s+/);
+      if (parts.length === 5 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+        const hh = parts[1].padStart(2, "0");
+        const mm = parts[0].padStart(2, "0");
+        if (parts[2] === "*" && parts[3] === "*" && parts[4] === "*") {
+          return `每天 ${hh}:${mm} 自动运行`;
+        }
+      }
+      return `按计划定时运行 (${cron})`;
+    }
+
+    function formatStepTitle(stepName) {
+      if (STEP_LABELS[stepName]) return STEP_LABELS[stepName];
+      if (String(stepName).startsWith("collect_")) {
+        const sid = stepName.slice(8);
+        return `采集 ${SOURCE_ID_LABELS[sid] || sid}`;
+      }
+      return stepName;
+    }
+
+    function formatStepDetail(detail) {
+      const text = String(detail || "").trim();
+      if (!text) return "-";
+      if (text.startsWith("connector=")) {
+        const cMatch = text.match(/connector=([^,]+)/);
+        const rMatch = text.match(/rows=(\d+)/);
+        const cLabel = cMatch ? (CONNECTOR_LABELS[cMatch[1]] || cMatch[1]) : "";
+        const rows = rMatch ? rMatch[1] : "0";
+        return `${cLabel ? cLabel + " · " : ""}共读取 ${rows} 条数据`;
+      }
+      if (text.startsWith("channels=")) {
+        const ch = (text.match(/channels=(\d+)/) || [])[1] || "0";
+        const an = (text.match(/anomalies=(\d+)/) || [])[1] || "0";
+        const df = (text.match(/diffs=(\d+)/) || [])[1] || "0";
+        return `汇总 ${ch} 个渠道 · 异常 ${an} 个 · 对账差异 ${df} 笔`;
+      }
+      if (text.startsWith("ticket=")) {
+        return `OA 回执单号：${text.slice(7)}`;
+      }
+      return text;
+    }
+
+    function formatLiveTarget(target) {
+      const t = String(target || "").trim();
+      if (!t) return "";
+      if (TARGET_ELEMENT_LABELS[t]) return `操作控件：${TARGET_ELEMENT_LABELS[t]}`;
+      if (t.startsWith("http://") || t.startsWith("https://")) {
+        try {
+          const u = new URL(t);
+          return `页面地址：${u.pathname}${u.search}`;
+        } catch {
+          return `页面地址：${t}`;
+        }
+      }
+      if (t.endsWith(".xlsx") || t.endsWith(".docx") || t.endsWith(".json")) {
+        return `生成文件：${t}`;
+      }
+      return t;
+    }
+
+    function esc(v) {
+      return String(v ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function fmtMoney(v) {
+      const n = Number(v || 0);
+      return "¥" + n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function toast(msg, kind = "") {
+      const stack = document.getElementById("toast-stack");
+      const el = document.createElement("div");
+      el.className = "toast " + kind;
+      el.textContent = msg;
+      stack.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = "0";
+        setTimeout(() => el.remove(), 220);
+      }, 3600);
+    }
+
+    async function api(url, opts = {}) {
+      const res = await fetch(url, opts);
+      if (res.status === 401) {
+        openAuthDialog();
+        throw new Error("未登录或口令已失效");
+      }
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const j = await res.json();
+          detail = j.detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+      return res.json();
+    }
+
+    function setBusy(isBusy, label = "执行中...") {
+      state.busy = isBusy;
+      const dot = document.getElementById("status-dot");
+      const txt = document.getElementById("status-text");
+      const btnRun = document.getElementById("btn-run-once");
+      const btnVis = document.getElementById("btn-run-visual");
+      const btnVisInline = document.getElementById("btn-start-live-inline");
+      const btnBf = document.getElementById("btn-backfill");
+      const btnDr = document.getElementById("btn-drill");
+      const btnLbl = document.getElementById("btn-run-label");
+
+      btnRun.disabled = isBusy;
+      if (btnVis) btnVis.disabled = isBusy;
+      if (btnVisInline) btnVisInline.disabled = isBusy;
+      btnBf.disabled = isBusy;
+      btnDr.disabled = isBusy;
+
+      if (isBusy) {
+        dot.classList.add("busy");
+        txt.textContent = label;
+        const start = Date.now();
+        clearInterval(state.timerHandle);
+        state.timerHandle = setInterval(() => {
+          const sec = ((Date.now() - start) / 1000).toFixed(1);
+          btnLbl.textContent = `${label} (${sec}s)`;
+        }, 120);
+      } else {
+        clearInterval(state.timerHandle);
+        dot.classList.remove("busy");
+        txt.textContent = "就绪";
+        btnLbl.textContent = "后台静默跑批";
+      }
+    }
+
+    function switchView(viewId) {
+      document.querySelectorAll(".nav-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.view === viewId);
+      });
+      document.querySelectorAll(".view").forEach(v => {
+        v.classList.toggle("active", v.id === "view-" + viewId);
+      });
+      document.getElementById("topbar-title").textContent = VIEW_TITLES[viewId] || "工作台";
+    }
+
+    async function loadState(jobName = state.selectedJob, bizDate = state.selectedDate) {
+      const qs = new URLSearchParams();
+      if (jobName) qs.set("job_name", jobName);
+      if (bizDate) qs.set("biz_date", bizDate);
+      const data = await api("/api/state?" + qs.toString());
+      state.data = data;
+      state.selectedJob = data.selected_job;
+      state.selectedDate = data.selected_date;
+      if (!state.selectedRunId && data.runs.length > 0) {
+        state.selectedRunId = data.runs[0].id;
+      }
+      renderAll();
+    }
+
+    function renderAll() {
+      const d = state.data;
+      if (!d) return;
+
+      // Sidebar controls
+      const jobSel = document.getElementById("job-select");
+      jobSel.innerHTML = d.jobs.map(j => `<option value="${esc(j)}" ${j === d.selected_job ? "selected" : ""}>${esc(JOB_LABELS[j] || j)}</option>`).join("");
+
+      const dateInput = document.getElementById("run-date-input");
+      if (!dateInput.value) dateInput.value = d.today;
+
+      const dryChk = document.getElementById("chk-dry-run");
+      if (!dryChk.dataset.initialized) {
+        dryChk.checked = Boolean(d.config_summary.dry_run_default);
+        dryChk.dataset.initialized = "1";
+      }
+
+      document.getElementById("env-foot").innerHTML = `
+        <span title="时区: ${esc(d.config_summary.timezone)}">${d.config_summary.headless ? "后台自动抓取模式" : "桌面可见浏览器模式"}</span>
+        <span title="Cron: ${esc(d.config_summary.daily_cron)}">${esc(formatCronHuman(d.config_summary.daily_cron))}</span>
+      `;
+
+      // Date pills
+      const pillsEl = document.getElementById("date-pills");
+      pillsEl.innerHTML = d.available_dates.slice(0, 10).map(dt => `
+        <button class="date-pill ${dt === d.selected_date ? "active" : ""}" data-date="${esc(dt)}" type="button">${esc(dt.slice(5))}</button>
+      `).join("");
+
+      renderKpiLedger(d.active_run);
+      renderChannels(d.active_run);
+      renderReconcile(d.active_run);
+      renderTrends(d.trend, d.config_summary.thresholds.min_roi);
+      renderReportsAndCard(d.active_run, d.notify_card);
+      renderAudit(d.runs, d.latest_run_steps);
+      renderArtifacts(d.dropzone_files, d.screenshots);
+      renderOps(d.doctor, d.storage_usage, d.config_summary);
+    }
+
+    function renderKpiLedger(run) {
+      const el = document.getElementById("kpi-ledger");
+      if (!run || !run.kpi) {
+        el.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">暂无已完成的数据，请点击左侧「观看机器人实时操作」或「后台静默跑批」。</div>`;
+        return;
+      }
+      const k = run.kpi;
+      const rec = k.reconcile_summary || {};
+      const diffCnt = Number(rec.discrepancy_count || 0);
+      const diffAmt = Number(rec.total_diff_amount || 0);
+      const anomCnt = Number(k.anomaly_count || 0);
+
+      el.innerHTML = `
+        <div class="kpi-cell">
+          <div class="kpi-label">账期与成交订单 (${esc(run.biz_date)})</div>
+          <div class="kpi-val">${Number(k.total_orders || 0).toLocaleString()} 笔</div>
+          <div class="kpi-sub">GMV ${fmtMoney(k.total_gmv)}</div>
+        </div>
+        <div class="kpi-cell">
+          <div class="kpi-label">全渠道净销售额</div>
+          <div class="kpi-val">${fmtMoney(k.total_net_sales)}</div>
+          <div class="kpi-sub">退款 ${fmtMoney(k.total_refund)}</div>
+        </div>
+        <div class="kpi-cell">
+          <div class="kpi-label">广告总消耗 / 整体 ROI</div>
+          <div class="kpi-val">${fmtMoney(k.total_ad_spend)}</div>
+          <div class="kpi-sub">整体投产比 ${Number(k.overall_roi || 0).toFixed(2)}</div>
+        </div>
+        <div class="kpi-cell">
+          <div class="kpi-label">异常告警渠道</div>
+          <div class="kpi-val ${anomCnt > 0 ? "err" : "ok"}">${anomCnt} 个</div>
+          <div class="kpi-sub">采集 ${run.row_count} 行 · 耗时 ${run.duration_sec.toFixed(2)}s</div>
+        </div>
+        <div class="kpi-cell">
+          <div class="kpi-label">CRM - 财务对账差异</div>
+          <div class="kpi-val ${diffCnt > 0 ? "warn" : "ok"}">${diffCnt} 笔</div>
+          <div class="kpi-sub">差异总额 ${fmtMoney(diffAmt)}</div>
+        </div>
+      `;
+    }
+
+    function renderChannels(run) {
+      const tbody = document.getElementById("ch-tbody");
+      const meta = document.getElementById("ch-meta");
+      if (!run || !run.kpi || !run.kpi.channels) {
+        meta.textContent = "";
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">暂无渠道数据</td></tr>`;
+        return;
+      }
+      const totalSales = Math.max(1, Number(run.kpi.total_net_sales || 1));
+      let rows = run.kpi.channels;
+      if (state.chFilter === "anomaly") rows = rows.filter(r => r.is_anomaly);
+      if (state.chSearch.trim()) {
+        const kw = state.chSearch.trim().toLowerCase();
+        rows = rows.filter(r => String(r.channel).toLowerCase().includes(kw));
+      }
+      meta.textContent = `显示 ${rows.length} / ${run.kpi.channels.length} 个渠道`;
+
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">没有匹配的渠道记录</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(r => {
+        const sharePct = Math.min(100, Math.max(0, (Number(r.net_sales || 0) / totalSales) * 100));
+        const roiHtml = r.has_ad_spend
+          ? `<span class="badge ${Number(r.roi) < 2 ? "badge-err" : "badge-ok"} num">${Number(r.roi).toFixed(2)}</span>`
+          : `<span class="mono" style="color:var(--ink-muted)">-</span>`;
+        const dod = r.sales_dod_pct;
+        let dodHtml = `<span style="color:var(--ink-muted)">-</span>`;
+        if (dod !== null && dod !== undefined) {
+          const val = Number(dod);
+          const cls = val < -10 ? "err-ink" : (val > 0 ? "ok-ink" : "ink-2");
+          const arrow = val > 0 ? "▲" : (val < 0 ? "▼" : "");
+          dodHtml = `<span style="color:var(--${cls});font-weight:600;">${arrow} ${val.toFixed(1)}%</span>`;
+        }
+        const statusBadge = r.is_anomaly
+          ? `<div style="display:flex;flex-wrap:wrap;gap:4px;">${String(r.anomaly_reason || "异常").split(/;\s*/).filter(Boolean).map(msg => `<span class="badge badge-err">${esc(msg)}</span>`).join("")}</div>`
+          : `<span class="badge badge-ok">正常</span>`;
+
+        return `
+          <tr>
+            <td class="nowrap" style="font-weight:600;">${esc(r.channel)}</td>
+            <td class="r">${Number(r.order_count)}</td>
+            <td class="r" style="font-weight:600;">${fmtMoney(r.net_sales)}</td>
+            <td>
+              <div class="share-bar-wrap">
+                <div class="share-track"><div class="share-fill" style="width:${sharePct.toFixed(1)}%"></div></div>
+                <span class="num" style="font-size:12px;color:var(--ink-2);">${sharePct.toFixed(1)}%</span>
+              </div>
+            </td>
+            <td class="r">${Number(r.refund_rate_pct || 0).toFixed(1)}%</td>
+            <td class="r">${fmtMoney(r.ad_spend)}</td>
+            <td class="r">${roiHtml}</td>
+            <td class="r nowrap">${dodHtml}</td>
+            <td>${statusBadge}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderReconcile(run) {
+      const tbody = document.getElementById("rec-tbody");
+      const meta = document.getElementById("rec-meta");
+      if (!run || !run.kpi) {
+        meta.textContent = "";
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state">暂无对账数据</td></tr>`;
+        return;
+      }
+      const sum = run.kpi.reconcile_summary || {};
+      let items = run.kpi.reconcile_items || [];
+      meta.textContent = sum.enabled
+        ? `已核对 ${sum.total_checked} 笔 · 匹配 ${sum.matched_count} 笔 · 差异 ${sum.discrepancy_count} 笔`
+        : "未启用财务对账源";
+
+      if (state.recFilter !== "all") {
+        items = items.filter(i => String(i.diff_type).includes(state.recFilter));
+      }
+      if (state.recSearch.trim()) {
+        const kw = state.recSearch.trim().toLowerCase();
+        items = items.filter(i =>
+          String(i.order_id).toLowerCase().includes(kw) ||
+          String(i.channel).toLowerCase().includes(kw)
+        );
+      }
+
+      if (items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state">当前筛选条件下无对账差异记录</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = items.map(i => {
+        const finLabel = FIN_STATUS_LABELS[i.finance_status] || i.finance_status || "暂无记录";
+        return `
+        <tr>
+          <td class="mono">${esc(i.order_id)}</td>
+          <td>${esc(i.channel)}</td>
+          <td class="r">${fmtMoney(i.crm_net_amount)}</td>
+          <td class="r">${fmtMoney(i.settled_amount)}</td>
+          <td class="r" style="color:var(--err-ink);font-weight:600;">${fmtMoney(i.diff_amount)}</td>
+          <td><span class="badge badge-warn">${esc(i.diff_type)}</span></td>
+          <td title="${esc(i.finance_status)}">${esc(finLabel)}</td>
+          <td style="color:var(--ink-2);">${esc(i.action_advice)}</td>
+        </tr>
+      `;
+      }).join("");
+    }
+
+    function renderTrends(trend, minRoi) {
+      const wrap1 = document.getElementById("svg-trend-wrap");
+      const wrap2 = document.getElementById("svg-roi-wrap");
+      const lbl = document.getElementById("trend-range-lbl");
+      if (!trend || trend.length === 0) {
+        lbl.textContent = "";
+        wrap1.innerHTML = `<div class="empty-state">暂无趋势数据，请点击左侧「补齐近 7 天」生成连续账期。</div>`;
+        wrap2.innerHTML = `<div class="empty-state">暂无投产比趋势数据。</div>`;
+        return;
+      }
+      lbl.textContent = `${trend[0].biz_date} ~ ${trend[trend.length - 1].biz_date}`;
+
+      // Chart 1: Sales & Ad Spend SVG
+      const W = 620, H = 240, padL = 56, padR = 20, padT = 18, padB = 34;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const maxVal = Math.max(100, ...trend.map(t => Math.max(t.total_net_sales, t.total_ad_spend))) * 1.12;
+      const xAt = idx => padL + (trend.length === 1 ? plotW / 2 : (idx / (trend.length - 1)) * plotW);
+      const yAt = val => padT + plotH - (val / maxVal) * plotH;
+
+      const salesPts = trend.map((t, i) => `${xAt(i).toFixed(1)},${yAt(t.total_net_sales).toFixed(1)}`).join(" ");
+      const spendPts = trend.map((t, i) => `${xAt(i).toFixed(1)},${yAt(t.total_ad_spend).toFixed(1)}`).join(" ");
+      const gridLines = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
+        const y = padT + plotH * (1 - ratio);
+        const val = Math.round(maxVal * ratio);
+        return `
+          <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#E6E4DC" stroke-dasharray="3 3"/>
+          <text x="${padL - 8}" y="${y + 4}" text-anchor="end" font-size="10.5" fill="#656D7A">${(val / 1000).toFixed(1)}k</text>
+        `;
+      }).join("");
+
+      const xLabels = trend.map((t, i) => `
+        <text x="${xAt(i)}" y="${H - 10}" text-anchor="middle" font-size="10.5" fill="#656D7A">${esc(t.biz_date.slice(5))}</text>
+      `).join("");
+
+      const hitNodes1 = trend.map((t, i) => `
+        <circle class="trend-pt" cx="${xAt(i)}" cy="${yAt(t.total_net_sales)}" r="4.5" fill="#0F52BA" stroke="#FDFCFA" stroke-width="1.5"
+          data-tip="${esc(t.biz_date)} · 净额 ${fmtMoney(t.total_net_sales)} · 消耗 ${fmtMoney(t.total_ad_spend)}"/>
+        <circle cx="${xAt(i)}" cy="${yAt(t.total_ad_spend)}" r="3.5" fill="#8A4B08" stroke="#FDFCFA" stroke-width="1.2"/>
+      `).join("");
+
+      wrap1.innerHTML = `
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+          ${gridLines}
+          ${xLabels}
+          <polyline fill="none" stroke="#0F52BA" stroke-width="2.4" points="${salesPts}" />
+          <polyline fill="none" stroke="#8A4B08" stroke-width="2" stroke-dasharray="5 3" points="${spendPts}" />
+          ${hitNodes1}
+        </svg>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--ink-2);margin-top:4px;">
+          <span><span style="display:inline-block;width:10px;height:3px;background:#0F52BA;vertical-align:middle;margin-right:5px;"></span>净销售额</span>
+          <span><span style="display:inline-block;width:10px;height:3px;background:#8A4B08;vertical-align:middle;margin-right:5px;"></span>广告消耗</span>
+        </div>
+      `;
+
+      // Chart 2: ROI Bars SVG
+      const W2 = 440, H2 = 240, pL2 = 40, pR2 = 16, pT2 = 18, pB2 = 34;
+      const pw2 = W2 - pL2 - pR2, ph2 = H2 - pT2 - pB2;
+      const maxRoi = Math.max(minRoi + 0.8, ...trend.map(t => t.overall_roi)) * 1.15;
+      const barSlot = pw2 / trend.length;
+      const barW = Math.min(34, Math.max(12, barSlot * 0.56));
+      const thrY = pT2 + ph2 - (minRoi / maxRoi) * ph2;
+
+      const roiBars = trend.map((t, i) => {
+        const bx = pL2 + i * barSlot + (barSlot - barW) / 2;
+        const bh = (t.overall_roi / maxRoi) * ph2;
+        const by = pT2 + ph2 - bh;
+        const fill = t.overall_roi < minRoi ? "#9E1C1C" : "#0B5D3B";
+        return `
+          <rect class="roi-bar" x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${fill}"
+            data-tip="${esc(t.biz_date)} · 投产比 ${t.overall_roi.toFixed(2)} (${t.total_orders} 笔)"/>
+          <text x="${(bx + barW / 2).toFixed(1)}" y="${H2 - 10}" text-anchor="middle" font-size="10.5" fill="#656D7A">${esc(t.biz_date.slice(5))}</text>
+        `;
+      }).join("");
+
+      wrap2.innerHTML = `
+        <svg viewBox="0 0 ${W2} ${H2}" style="width:100%;height:auto;display:block;">
+          <line x1="${pL2}" y1="${pT2 + ph2}" x2="${W2 - pR2}" y2="${pT2 + ph2}" stroke="#DCD9D0"/>
+          ${roiBars}
+          <line x1="${pL2}" y1="${thrY.toFixed(1)}" x2="${W2 - pR2}" y2="${thrY.toFixed(1)}" stroke="#9E1C1C" stroke-dasharray="4 3" stroke-width="1.4"/>
+          <text x="${pL2 - 6}" y="${thrY.toFixed(1)}" text-anchor="end" font-size="10.5" fill="#9E1C1C">${minRoi.toFixed(1)}</text>
+        </svg>
+      `;
+
+      bindTooltip(wrap1, ".trend-pt", document.getElementById("trend-tooltip"));
+      bindTooltip(wrap2, ".roi-bar", document.getElementById("roi-tooltip"));
+    }
+
+    function bindTooltip(container, selector, tipEl) {
+      container.querySelectorAll(selector).forEach(el => {
+        el.addEventListener("mouseenter", e => {
+          tipEl.textContent = el.dataset.tip || "";
+          tipEl.style.opacity = "1";
+          const rect = container.parentElement.getBoundingClientRect();
+          tipEl.style.left = Math.max(8, e.clientX - rect.left - 40) + "px";
+          tipEl.style.top = Math.max(8, e.clientY - rect.top - 34) + "px";
+        });
+        el.addEventListener("mouseleave", () => {
+          tipEl.style.opacity = "0";
+        });
+      });
+    }
+
+    function renderReportsAndCard(run, notifyCard) {
+      const pre = document.getElementById("summary-pre");
+      const dlStrip = document.getElementById("download-strip");
+      const cardWrap = document.getElementById("feishu-preview-wrap");
+
+      if (!run) {
+        pre.textContent = "暂无已完成的经营摘要。";
+        dlStrip.innerHTML = "";
+        cardWrap.innerHTML = `<div class="empty-state">尚无通知预览卡片。</div>`;
+        return;
+      }
+
+      pre.textContent = run.summary_text || "暂无摘要文本。";
+      const dt = esc(run.biz_date);
+      const btns = [];
+      if (run.has_excel) {
+        btns.push(`<a class="btn btn-primary btn-sm" href="/api/download/excel/${dt}">下载 Excel 日报 (.xlsx)</a>`);
+      }
+      if (run.has_word) {
+        btns.push(`<a class="btn btn-secondary btn-sm" href="/api/download/word/${dt}">下载 Word 周报 (.docx)</a>`);
+      }
+      if (run.has_notify) {
+        btns.push(`<a class="btn btn-secondary btn-sm" href="/api/download/notify/${dt}">下载群消息备份 (.json)</a>`);
+      }
+      dlStrip.innerHTML = btns.join("");
+
+      if (notifyCard && notifyCard.card) {
+        const hdr = notifyCard.card.header || {};
+        const tpl = hdr.template === "red" ? "red" : "blue";
+        const title = (hdr.title || {}).content || "RPA 日报通知";
+        const md = ((notifyCard.card.elements || [])[0] || {}).content || "";
+        const formattedMd = esc(md)
+          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+          .replace(/`([^`]+)`/g, "<code class='mono' style='background:var(--subtle);padding:1px 5px;border-radius:3px;'>$1</code>");
+        cardWrap.innerHTML = `
+          <div class="feishu-card">
+            <div class="feishu-head ${tpl}">${esc(title)}</div>
+            <div class="feishu-body">${formattedMd}</div>
+          </div>
+        `;
+      } else if (notifyCard && notifyCard.markdown) {
+        cardWrap.innerHTML = `
+          <div class="feishu-card">
+            <div class="feishu-head blue">${esc(notifyCard.markdown.title || "钉钉日报")}</div>
+            <div class="feishu-body">${esc(notifyCard.markdown.text || "")}</div>
+          </div>
+        `;
+      } else {
+        cardWrap.innerHTML = `<div class="empty-state">当前账期暂无通知预览文件。</div>`;
+      }
+    }
+
+    function renderAudit(runs, latestSteps) {
+      const tbody = document.getElementById("runs-tbody");
+      if (!runs || runs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">暂无执行记录</td></tr>`;
+        document.getElementById("wf-body").innerHTML = `<div class="empty-state">暂无步骤明细</div>`;
+        return;
+      }
+
+      tbody.innerHTML = runs.map(r => {
+        const stCls = r.status === "SUCCESS" ? "badge-ok" : (r.status === "FAILED" ? "badge-err" : "badge-warn");
+        const stLabel = RUN_STATUS_LABELS[r.status] || r.status;
+        const isSel = r.id === state.selectedRunId;
+        return `
+          <tr class="clickable ${isSel ? "selected-row" : ""}" data-run-id="${r.id}">
+            <td class="mono nowrap">#${r.id}</td>
+            <td class="mono nowrap">${esc(r.biz_date)}</td>
+            <td><span class="badge ${stCls}" title="${esc(r.status)}">${esc(stLabel)}</span></td>
+            <td class="r">${Number(r.duration_sec).toFixed(2)}s</td>
+            <td class="r">${r.row_count}</td>
+            <td class="r">${r.anomaly_count}</td>
+            <td class="mono nowrap" style="color:var(--ink-2);">${esc(r.started_at.replace("T", " "))}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const activeRun = runs.find(r => r.id === state.selectedRunId) || runs[0];
+      if (activeRun && activeRun.id === runs[0].id) {
+        renderWaterfall(activeRun.id, activeRun.biz_date, latestSteps);
+      } else if (activeRun) {
+        api(`/api/runs/${activeRun.id}/steps`).then(res => {
+          renderWaterfall(activeRun.id, activeRun.biz_date, res.steps);
+        }).catch(() => {});
+      }
+    }
+
+    function renderWaterfall(runId, bizDate, steps) {
+      document.getElementById("wf-title").textContent = `第 #${runId} 次执行 · 每步耗时明细`;
+      document.getElementById("wf-meta").textContent = bizDate ? `统计日期 ${bizDate}` : "";
+      const body = document.getElementById("wf-body");
+      if (!steps || steps.length === 0) {
+        body.innerHTML = `<div class="empty-state">本次执行暂无步骤明细。</div>`;
+        return;
+      }
+      const maxMs = Math.max(10, ...steps.map(s => Number(s.duration_ms || 0)));
+      body.innerHTML = steps.map(s => {
+        const ms = Number(s.duration_ms || 0);
+        const pct = Math.max(3, Math.min(100, (ms / maxMs) * 100));
+        const isFail = s.status === "FAILED";
+        const stText = s.status === "FAILED" ? "失败" : (s.status === "STARTED" ? "进行中" : "完成");
+        const stepTitle = formatStepTitle(s.step_name);
+        const detailText = formatStepDetail(s.detail);
+        return `
+          <div class="wf-row">
+            <div>
+              <div style="font-weight:600;color:var(--ink);" title="${esc(s.step_name)}">${esc(stepTitle)}</div>
+              <div style="font-size:11.5px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(detailText)}">${esc(detailText)}</div>
+            </div>
+            <div><span class="badge ${isFail ? "badge-err" : "badge-ok"}">${esc(stText)}</span></div>
+            <div class="wf-track"><div class="wf-bar ${isFail ? "failed" : ""}" style="width:${pct.toFixed(1)}%"></div></div>
+            <div class="r mono">${ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : ms.toFixed(0) + "ms"}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderArtifacts(dropFiles, shots) {
+      const dropBody = document.getElementById("drop-tbody");
+      if (!dropFiles || dropFiles.length === 0) {
+        dropBody.innerHTML = `<tr><td colspan="4" class="empty-state">暂无等待处理的手工单据文件</td></tr>`;
+      } else {
+        dropBody.innerHTML = dropFiles.map(f => `
+          <tr>
+            <td class="mono">${esc(f.name)}</td>
+            <td class="r">${Number(f.size_kb).toFixed(1)} KB</td>
+            <td class="mono" style="color:var(--ink-2);">${esc(f.modified_at)}</td>
+            <td class="r"><button class="btn btn-danger-ghost btn-sm" data-del-drop="${esc(f.name)}" type="button">删除</button></td>
+          </tr>
+        `).join("");
+      }
+
+      document.getElementById("shot-count").textContent = `${(shots || []).length} 张`;
+      const shotGrid = document.getElementById("shot-grid");
+      if (!shots || shots.length === 0) {
+        shotGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">暂无故障截图。可点击左侧「模拟故障截图」体验报错时自动留痕效果。</div>`;
+      } else {
+        shotGrid.innerHTML = shots.map(s => `
+          <div class="shot-item" data-shot-name="${esc(s.name)}" tabindex="0" role="button">
+            <img src="/api/screenshots/${encodeURIComponent(s.name)}" alt="${esc(s.name)}" loading="lazy" />
+            <div class="shot-meta">
+              <div class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink);">${esc(s.name)}</div>
+              <div>${esc(s.modified_at)} · ${Number(s.size_kb).toFixed(1)} KB</div>
+            </div>
+          </div>
+        `).join("");
+      }
+    }
+
+    function renderOps(doctor, usage, cfgSum) {
+      const docBody = document.getElementById("doctor-tbody");
+      docBody.innerHTML = (doctor || []).map(item => {
+        const st = item["状态"];
+        const cls = st === "OK" ? "badge-ok" : (st === "WARN" ? "badge-warn" : (st === "ERROR" ? "badge-err" : "badge-info"));
+        const stLabel = DOCTOR_STATUS_LABELS[st] || st;
+        return `
+          <tr>
+            <td style="font-weight:600;">${esc(item["检查项"])}</td>
+            <td><span class="badge ${cls}" title="${esc(st)}">${esc(stLabel)}</span></td>
+            <td style="color:var(--ink-2);">${esc(item["详情"])}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const srcBody = document.getElementById("sources-tbody");
+      srcBody.innerHTML = (cfgSum.sources || []).map(s => `
+        <tr>
+          <td style="font-weight:600;" title="${esc(s.id)}">${esc(SOURCE_ID_LABELS[s.id] || s.id)}</td>
+          <td style="color:var(--ink-2);" title="${esc(s.connector)}">${esc(CONNECTOR_LABELS[s.connector] || s.connector)}</td>
+          <td><span class="badge badge-neutral" title="${esc(s.role)}">${esc(ROLE_LABELS[s.role] || s.role)}</span></td>
+          <td><span class="badge ${s.enabled ? "badge-ok" : "badge-neutral"}">${s.enabled ? "已开启" : "未开启"}</span></td>
+        </tr>
+      `).join("");
+
+      const bars = document.getElementById("storage-bars");
+      const ret = cfgSum.retention || {};
+      const items = [
+        ["抓取到的原始单据", usage.downloads || 0, `${ret.downloads_days} 天`],
+        ["生成的 Excel / Word 报表", usage.outputs || 0, `${ret.outputs_days} 天`],
+        ["异常故障自动截图", usage.screenshots || 0, `${ret.screenshots_days} 天`],
+        ["系统运行日志文件", usage.logs || 0, `${ret.logs_days} 天`],
+        ["已保存的自动登录凭证", usage.auth_states || 0, "长期保留"],
+      ];
+      const maxMb = Math.max(0.5, ...items.map(i => i[1]));
+      bars.innerHTML = items.map(([label, mb, keep]) => {
+        const w = Math.max(2, (mb / maxMb) * 100);
+        return `
+          <div style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;">
+              <span>${esc(label)}</span>
+              <span class="mono" style="color:var(--ink-2);">${Number(mb).toFixed(3)} MB · 保留 ${esc(keep)}</span>
+            </div>
+            <div class="wf-track"><div class="wf-bar" style="width:${w.toFixed(1)}%"></div></div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function openAuthDialog() {
+      const dlg = document.getElementById("auth-dialog");
+      if (!dlg.open) dlg.showModal();
+    }
+
+    // Event bindings
+    document.querySelectorAll(".nav-btn").forEach(btn => {
+      btn.addEventListener("click", () => switchView(btn.dataset.view));
+    });
+
+    document.addEventListener("keydown", e => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+      const map = { "1": "overview", "2": "reports", "3": "audit", "4": "artifacts", "5": "ops", "6": "live" };
+      if (map[e.key]) switchView(map[e.key]);
+    });
+
+    document.getElementById("date-pills").addEventListener("click", e => {
+      const btn = e.target.closest(".date-pill");
+      if (!btn) return;
+      state.selectedDate = btn.dataset.date;
+      loadState(state.selectedJob, state.selectedDate);
+    });
+
+    document.getElementById("job-select").addEventListener("change", e => {
+      state.selectedJob = e.target.value;
+      state.selectedDate = null;
+      state.selectedRunId = null;
+      loadState(state.selectedJob, null);
+    });
+
+    document.getElementById("btn-refresh").addEventListener("click", async () => {
+      await loadState();
+      toast("界面数据已刷新");
+    });
+
+    document.getElementById("btn-run-once").addEventListener("click", async () => {
+      const bizDate = document.getElementById("run-date-input").value || state.data?.today;
+      const force = document.getElementById("chk-force").checked;
+      const dryRun = document.getElementById("chk-dry-run").checked;
+      setBusy(true, "跑批采集中");
+      try {
+        const res = await api("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_name: state.selectedJob, biz_date: bizDate, force, dry_run: dryRun }),
+        });
+        if (res.status === "SUCCESS") {
+          toast(`执行成功：共采集 ${res.row_count} 条记录，发现 ${res.reconcile_diff_count} 笔对账差异 (${res.duration_sec}s)`, "ok");
+          state.selectedDate = res.biz_date;
+          state.selectedRunId = res.run_id;
+        } else if (res.status === "SKIPPED") {
+          toast(`${res.biz_date} 当天报表已存在，已自动跳过；如需重新覆盖请勾选左侧“覆盖重跑”`, "warn");
+        } else if (res.status === "LOCKED") {
+          toast(`已有任务正在运行，请稍后再试：${res.error_message}`, "warn");
+        } else {
+          toast(`执行失败：${res.error_message}`, "err");
+        }
+        await loadState(state.selectedJob, state.selectedDate);
+      } catch (err) {
+        toast("请求失败：" + err.message, "err");
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    document.getElementById("btn-backfill").addEventListener("click", async () => {
+      const force = document.getElementById("chk-force").checked;
+      const dryRun = document.getElementById("chk-dry-run").checked;
+      setBusy(true, "7日补数中");
+      try {
+        const res = await api("/api/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_name: state.selectedJob, days: 7, force, dry_run: dryRun }),
+        });
+        toast(`7日补数完成：成功 ${res.success} 天，跳过 ${res.skipped} 天，失败 ${res.failed} 天`, res.failed ? "warn" : "ok");
+        await loadState(state.selectedJob, null);
+      } catch (err) {
+        toast("补数失败：" + err.message, "err");
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    document.getElementById("btn-drill").addEventListener("click", async () => {
+      const bizDate = document.getElementById("run-date-input").value || state.data?.today;
+      const dryRun = document.getElementById("chk-dry-run").checked;
+      setBusy(true, "演练超时截图中");
+      try {
+        const res = await api("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_name: state.selectedJob, biz_date: bizDate, force: true, dry_run: dryRun, simulate_failure: true }),
+        });
+        toast(`故障演练完成：已留痕截图 ${res.screenshot_name || "-"} 与告警卡片`, "warn");
+        state.selectedRunId = res.run_id;
+        await loadState(state.selectedJob, state.selectedDate);
+        switchView("artifacts");
+      } catch (err) {
+        toast("演练请求异常：" + err.message, "err");
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    // Filters
+    document.getElementById("ch-filter-pills").addEventListener("click", e => {
+      const btn = e.target.closest(".filter-pill");
+      if (!btn) return;
+      document.querySelectorAll("#ch-filter-pills .filter-pill").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      state.chFilter = btn.dataset.filter;
+      renderChannels(state.data?.active_run);
+    });
+    document.getElementById("ch-search").addEventListener("input", e => {
+      state.chSearch = e.target.value;
+      renderChannels(state.data?.active_run);
+    });
+
+    document.getElementById("rec-filter-pills").addEventListener("click", e => {
+      const btn = e.target.closest(".filter-pill");
+      if (!btn) return;
+      document.querySelectorAll("#rec-filter-pills .filter-pill").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      state.recFilter = btn.dataset.filter;
+      renderReconcile(state.data?.active_run);
+    });
+    document.getElementById("rec-search").addEventListener("input", e => {
+      state.recSearch = e.target.value;
+      renderReconcile(state.data?.active_run);
+    });
+
+    // Copy summary
+    document.getElementById("btn-copy-summary").addEventListener("click", async () => {
+      const text = document.getElementById("summary-pre").textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("摘要已复制到剪贴板", "ok");
+      } catch {
+        toast("当前环境不支持一键复制，请手动选取文本", "warn");
+      }
+    });
+
+    // Run audit row click
+    document.getElementById("runs-tbody").addEventListener("click", async e => {
+      const tr = e.target.closest("tr[data-run-id]");
+      if (!tr) return;
+      const runId = Number(tr.dataset.runId);
+      state.selectedRunId = runId;
+      document.querySelectorAll("#runs-tbody tr").forEach(r => r.classList.toggle("selected-row", Number(r.dataset.runId) === runId));
+      const runObj = (state.data?.runs || []).find(r => r.id === runId);
+      const res = await api(`/api/runs/${runId}/steps`);
+      renderWaterfall(runId, runObj?.biz_date || "", res.steps);
+    });
+
+    // Dropzone upload & delete
+    const dropArea = document.getElementById("drop-area");
+    const fileInput = document.getElementById("drop-file-input");
+
+    async function handleFileUpload(file) {
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const res = await api("/api/dropzone/upload", { method: "POST", body: fd });
+        toast(`已上传 ${res.filename} (${res.size_kb} KB)`, "ok");
+        await loadState();
+      } catch (err) {
+        toast("上传失败：" + err.message, "err");
+      }
+    }
+
+    dropArea.addEventListener("click", () => fileInput.click());
+    dropArea.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+    fileInput.addEventListener("change", e => handleFileUpload(e.target.files[0]));
+    dropArea.addEventListener("dragover", e => { e.preventDefault(); dropArea.classList.add("drag-over"); });
+    dropArea.addEventListener("dragleave", () => dropArea.classList.remove("drag-over"));
+    dropArea.addEventListener("drop", e => {
+      e.preventDefault();
+      dropArea.classList.remove("drag-over");
+      if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files[0]);
+    });
+
+    document.getElementById("drop-tbody").addEventListener("click", async e => {
+      const btn = e.target.closest("button[data-del-drop]");
+      if (!btn) return;
+      const name = btn.dataset.delDrop;
+      try {
+        await api(`/api/dropzone/${encodeURIComponent(name)}`, { method: "DELETE" });
+        toast(`已删除 ${name}`, "ok");
+        await loadState();
+      } catch (err) {
+        toast("删除失败：" + err.message, "err");
+      }
+    });
+
+    // Screenshot Lightbox
+    const shotDlg = document.getElementById("shot-dialog");
+    document.getElementById("shot-grid").addEventListener("click", e => {
+      const card = e.target.closest(".shot-item[data-shot-name]");
+      if (!card) return;
+      const name = card.dataset.shotName;
+      document.getElementById("dlg-shot-title").textContent = name;
+      document.getElementById("dlg-shot-img").src = `/api/screenshots/${encodeURIComponent(name)}`;
+      shotDlg.showModal();
+    });
+    document.getElementById("dlg-shot-close").addEventListener("click", () => shotDlg.close());
+    shotDlg.addEventListener("click", e => { if (e.target === shotDlg) shotDlg.close(); });
+
+    // Ops buttons
+    async function triggerTestAlert() {
+      const dryRun = document.getElementById("chk-dry-run").checked;
+      const res = await api("/api/ops/test-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_name: state.selectedJob, biz_date: state.selectedDate, dry_run: dryRun }),
+      });
+      toast(`测试告警卡片已生成：${res.filename}`, "ok");
+      state.data.notify_card = res.card;
+      renderReportsAndCard(state.data?.active_run, res.card);
+    }
+
+    document.getElementById("btn-test-alert-inline").addEventListener("click", () => triggerTestAlert().catch(e => toast(e.message, "err")));
+    document.getElementById("btn-test-alert-ops").addEventListener("click", () => triggerTestAlert().catch(e => toast(e.message, "err")));
+
+    document.getElementById("btn-backup-db").addEventListener("click", async () => {
+      try {
+        const res = await api("/api/ops/backup", { method: "POST" });
+        toast(`在线热备份成功：${res.filename} (${res.size_kb} KB)`, "ok");
+      } catch (err) {
+        toast("备份失败：" + err.message, "err");
+      }
+    });
+
+    document.getElementById("btn-clean-dry").addEventListener("click", async () => {
+      const res = await api("/api/ops/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      toast(`预检：将清理 ${res.total_files_removed} 个过期文件（${(res.total_bytes_reclaimed / 1024).toFixed(1)} KB）`);
+    });
+
+    document.getElementById("btn-clean-exec").addEventListener("click", async () => {
+      const res = await api("/api/ops/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: false }),
+      });
+      toast(`清理完成：删除 ${res.total_files_removed} 个文件`, "ok");
+      await loadState();
+    });
+
+    document.getElementById("btn-run-doctor").addEventListener("click", async () => {
+      await loadState();
+      toast("自检已完成", "ok");
+    });
+
+    // Auth form
+    document.getElementById("auth-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const pwd = document.getElementById("auth-pwd").value;
+      const errBox = document.getElementById("auth-err");
+      errBox.style.display = "none";
+      try {
+        await api("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pwd }),
+        });
+        document.getElementById("auth-dialog").close();
+        await loadState();
+      } catch (err) {
+        errBox.textContent = err.message;
+        errBox.style.display = "block";
+      }
+    });
+
+    // Live Visual RPA Demo & Replay
+    function renderLiveSession(sess, followLatest = true) {
+      state.liveSession = sess;
+      const badge = document.getElementById("live-status-badge");
+      const urlBar = document.getElementById("live-url-bar");
+      const elapsedEl = document.getElementById("live-elapsed");
+      const feed = document.getElementById("live-action-feed");
+      const imgEl = document.getElementById("live-img");
+      const emptyEl = document.getElementById("live-empty");
+      const counterEl = document.getElementById("live-frame-counter");
+      const metaEl = document.getElementById("live-meta");
+
+      if (!sess) return;
+
+      const st = sess.status || "RUNNING";
+      const stLabels = { RUNNING: "机器人操作中", SUCCESS: "全部流程完成", FAILED: "执行出错", SKIPPED: "已跳过", LOCKED: "已被占用" };
+      badge.className = "badge " + (st === "RUNNING" ? "badge-info" : (st === "SUCCESS" ? "badge-ok" : "badge-err"));
+      badge.textContent = stLabels[st] || st;
+      elapsedEl.textContent = `${Number(sess.elapsed_sec || 0).toFixed(1)}s`;
+      if (sess.outcome && sess.outcome.oa_ticket_id) {
+        metaEl.textContent = `最近演示已完成 · OA 审批回执单号: ${sess.outcome.oa_ticket_id}`;
+      }
+
+      const events = sess.events || [];
+      const framedIndices = events.map((e, i) => (e.frame_url ? i : -1)).filter(i => i >= 0);
+
+      if (followLatest && framedIndices.length > 0) {
+        state.liveSelectedIdx = framedIndices[framedIndices.length - 1];
+      } else if (state.liveSelectedIdx < 0 && framedIndices.length > 0) {
+        state.liveSelectedIdx = framedIndices[0];
+      }
+
+      const activeEvt = state.liveSelectedIdx >= 0 ? events[state.liveSelectedIdx] : null;
+      if (activeEvt && activeEvt.frame_url) {
+        emptyEl.style.display = "none";
+        imgEl.style.display = "block";
+        imgEl.src = activeEvt.frame_url;
+        urlBar.textContent = activeEvt.url || sess.current_url || "about:blank";
+      } else if (sess.current_frame_url) {
+        emptyEl.style.display = "none";
+        imgEl.style.display = "block";
+        imgEl.src = sess.current_frame_url;
+        urlBar.textContent = sess.current_url || "about:blank";
+      }
+
+      const posInFramed = framedIndices.indexOf(state.liveSelectedIdx);
+      counterEl.textContent = framedIndices.length > 0
+        ? `第 ${posInFramed >= 0 ? posInFramed + 1 : 1} 步 / 共 ${framedIndices.length} 步`
+        : `0 / 0`;
+
+      if (events.length === 0) {
+        feed.innerHTML = `<div class="empty-state">正在打开自动操作浏览器...</div>`;
+        return;
+      }
+
+      feed.innerHTML = events.map((e, idx) => {
+        const isAct = idx === state.liveSelectedIdx;
+        const actCls = e.action === "ERROR" ? "badge-err" : (e.action === "SUBMIT" || e.action === "UPLOAD" ? "badge-ok" : "badge-info");
+        const actLabel = LIVE_ACTION_LABELS[e.action] || e.action;
+        const friendlyTarget = formatLiveTarget(e.target);
+        return `
+          <div class="action-row ${isAct ? "active" : ""}" data-evt-idx="${idx}">
+            <div class="action-top">
+              <span><span class="badge ${actCls}" title="${esc(e.action)}">${esc(actLabel)}</span> <strong style="color:var(--ink);margin-left:4px;">${esc(e.phase)}</strong></span>
+              <span class="mono" style="color:var(--ink-muted);">${Number(e.elapsed_sec).toFixed(1)}s</span>
+            </div>
+            <div style="font-size:12.5px;color:var(--ink);">${esc(e.detail)}</div>
+            <div style="font-size:11.5px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(e.target)}">${esc(friendlyTarget)}</div>
+          </div>
+        `;
+      }).join("");
+
+      if (followLatest) {
+        feed.scrollTop = feed.scrollHeight;
+      }
+    }
+
+    async function startVisualDemo() {
+      clearInterval(state.livePollHandle);
+      clearInterval(state.replayHandle);
+      const bizDate = document.getElementById("run-date-input").value || state.data?.today;
+      const dryRun = document.getElementById("chk-dry-run").checked;
+      const freshLogin = document.getElementById("chk-fresh-login").checked;
+
+      switchView("live");
+      setBusy(true, "可视化直播中");
+      state.liveSelectedIdx = -1;
+
+      try {
+        const created = await api("/api/run-visual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            job_name: state.selectedJob,
+            biz_date: bizDate,
+            force: true,
+            dry_run: dryRun,
+            fresh_login: freshLogin,
+            visual_delay_ms: 420,
+          }),
+        });
+        const sid = created.session_id;
+        state.livePollHandle = setInterval(async () => {
+          try {
+            const res = await api(`/api/live/${encodeURIComponent(sid)}`);
+            const sess = res.session;
+            renderLiveSession(sess, true);
+            if (sess.status !== "RUNNING") {
+              clearInterval(state.livePollHandle);
+              setBusy(false);
+              if (sess.status === "SUCCESS") {
+                const ticket = sess.outcome?.oa_ticket_id ? ` · OA 回执 ${sess.outcome.oa_ticket_id}` : "";
+                toast(`可视化跑批完成${ticket}`, "ok");
+                state.selectedDate = sess.biz_date;
+                state.selectedRunId = sess.outcome?.run_id || state.selectedRunId;
+              } else {
+                toast(`执行结束: ${sess.status}`, "warn");
+              }
+              await loadState(state.selectedJob, state.selectedDate);
+            }
+          } catch {}
+        }, 300);
+      } catch (err) {
+        setBusy(false);
+        toast("启动直播演示失败：" + err.message, "err");
+      }
+    }
+
+    document.getElementById("btn-run-visual").addEventListener("click", startVisualDemo);
+    document.getElementById("btn-start-live-inline").addEventListener("click", startVisualDemo);
+
+    document.getElementById("live-action-feed").addEventListener("click", e => {
+      const row = e.target.closest(".action-row[data-evt-idx]");
+      if (!row || !state.liveSession) return;
+      clearInterval(state.replayHandle);
+      const idx = Number(row.dataset.evtIdx);
+      const evts = state.liveSession.events || [];
+      if (evts[idx] && evts[idx].frame_url) {
+        state.liveSelectedIdx = idx;
+      } else {
+        for (let i = idx; i >= 0; i--) {
+          if (evts[i]?.frame_url) { state.liveSelectedIdx = i; break; }
+        }
+      }
+      renderLiveSession(state.liveSession, false);
+    });
+
+    function stepFrame(delta) {
+      if (!state.liveSession) return;
+      clearInterval(state.replayHandle);
+      const framed = (state.liveSession.events || []).map((e, i) => (e.frame_url ? i : -1)).filter(i => i >= 0);
+      if (framed.length === 0) return;
+      const curPos = Math.max(0, framed.indexOf(state.liveSelectedIdx));
+      const nextPos = Math.max(0, Math.min(framed.length - 1, curPos + delta));
+      state.liveSelectedIdx = framed[nextPos];
+      renderLiveSession(state.liveSession, false);
+    }
+
+    document.getElementById("btn-replay-prev").addEventListener("click", () => stepFrame(-1));
+    document.getElementById("btn-replay-next").addEventListener("click", () => stepFrame(1));
+    document.getElementById("btn-replay-play").addEventListener("click", () => {
+      if (!state.liveSession) return;
+      clearInterval(state.replayHandle);
+      const framed = (state.liveSession.events || []).map((e, i) => (e.frame_url ? i : -1)).filter(i => i >= 0);
+      if (framed.length === 0) return;
+      let pos = 0;
+      state.liveSelectedIdx = framed[0];
+      renderLiveSession(state.liveSession, false);
+      state.replayHandle = setInterval(() => {
+        pos += 1;
+        if (pos >= framed.length) {
+          clearInterval(state.replayHandle);
+          return;
+        }
+        state.liveSelectedIdx = framed[pos];
+        renderLiveSession(state.liveSession, false);
+      }, 650);
+    });
+
+    (async function boot() {
+      try {
+        const auth = await api("/api/auth-status");
+        if (auth.auth_required && !auth.authenticated) {
+          openAuthDialog();
+          return;
+        }
+        await loadState();
+        const latestLive = await api("/api/live/latest");
+        if (latestLive.session) {
+          renderLiveSession(latestLive.session, true);
+        }
+      } catch (err) {
+        toast("初始化失败：" + err.message, "err");
+      }
+    })();
+  </script>
+</body>
+</html>
