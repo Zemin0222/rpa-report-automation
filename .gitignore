@@ -20,9 +20,11 @@ storage/screenshots/*
 storage/logs/*
 storage/backups/*
 storage/live_frames/*
+storage/invoices/*
 !storage/auth_states/.gitkeep
 !storage/downloads/.gitkeep
 !storage/dropzone/.gitkeep
 !storage/outputs/.gitkeep
 !storage/screenshots/.gitkeep
 !storage/backups/.gitkeep
+!storage/invoices/.gitkeep

@@ -24,6 +24,7 @@ def resolve_auth_login_url(cfg: AppConfig, site: str, explicit_url: str | None) 
         "mock_ads": f"{cfg.connectors.mock_ads.base_url.rstrip('/')}/ads/login",
         "mock_finance": f"{cfg.connectors.mock_finance.base_url.rstrip('/')}/finance/login",
         "mock_oa": f"{cfg.connectors.mock_oa.base_url.rstrip('/')}/oa/login",
+        "mock_expense": f"{cfg.connectors.mock_expense.base_url.rstrip('/')}/expense/login",
     }
     if site in presets:
         return presets[site]

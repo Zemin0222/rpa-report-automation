@@ -198,3 +198,38 @@ def send_failure_alert(
     except Exception as exc:
         logger.warning("Failed to send failure alert webhook (preview kept): %s", exc)
         return preview_path
+
+
+def send_summary_card(
+    cfg: NotifierConfig,
+    title: str,
+    markdown_body: str,
+    output_dir: Path,
+    preview_filename: str,
+    is_warning: bool = False,
+    force_dry_run: bool | None = None,
+) -> Path:
+    """Send or preview a generic Feishu/DingTalk workflow summary card."""
+    dry_run = cfg.dry_run if force_dry_run is None else force_dry_run
+    if cfg.channel == "dingtalk":
+        payload: dict[str, Any] = {
+            "msgtype": "markdown",
+            "markdown": {"title": title, "text": markdown_body},
+        }
+    else:
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {"tag": "plain_text", "content": title},
+                    "template": "red" if is_warning else "blue",
+                },
+                "elements": [{"tag": "markdown", "content": markdown_body}],
+            },
+        }
+    return _post_webhook(
+        cfg.channel,
+        payload,
+        dry_run=dry_run,
+        preview_path=output_dir / preview_filename,
+    )

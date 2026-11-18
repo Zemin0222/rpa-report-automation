@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from workflows.base import Workflow, WorkflowDescriptor
 from workflows.daily_ops import DailyOpsWorkflow
+from workflows.expense_reimburse import ExpenseReimburseWorkflow
 
 _WORKFLOW_REGISTRY: dict[str, Workflow] = {}
 
@@ -34,3 +35,4 @@ def list_workflows() -> list[WorkflowDescriptor]:
 
 
 register_workflow(DailyOpsWorkflow())
+register_workflow(ExpenseReimburseWorkflow())

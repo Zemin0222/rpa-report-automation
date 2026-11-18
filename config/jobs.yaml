@@ -38,6 +38,13 @@ connectors:
     password_env: "OA_PASSWORD"
     default_username: "oa_staff"
     default_password: "rpa_oa_pass"
+  mock_expense:
+    enabled: true
+    base_url: "http://127.0.0.1:8765"
+    username_env: "EXPENSE_USERNAME"
+    password_env: "EXPENSE_PASSWORD"
+    default_username: "fin_staff"
+    default_password: "rpa_exp_pass"
   local_drop:
     enabled: true
     drop_dir: "storage/dropzone"
@@ -77,6 +84,29 @@ jobs:
         enabled: true
         deduplicate: false
         archive_after_read: false
+
+  - job_name: expense_reimburse
+    workflow: expense_reimburse
+    title: "发票智能识别与自动报销"
+    description: "自动识别电子发票（PDF/图片），执行重复/超标/抬头合规检查并登录财务报销系统逐单填报上传"
+    enabled: true
+    daily_cron: "0 17 * * *"
+    weekly_cron: "30 17 * * 5"
+    sources: []
+
+expense:
+  company_name: "星辰智联科技有限公司"
+  company_tax_id: "91310115MA1K88990X"
+  applicant_name: "林小默"
+  department: "运营交付中心"
+  max_invoice_age_days: 30
+  auto_submit_flagged: false
+  category_limits:
+    餐饮: 200.0
+    交通: 300.0
+    住宿: 500.0
+    办公: 1000.0
+    通信: 300.0
 
 thresholds:
   min_roi: 2.0

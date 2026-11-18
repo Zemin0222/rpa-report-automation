@@ -23,9 +23,12 @@ FINANCE_USER = os.getenv("FINANCE_USERNAME", "fin_admin")
 FINANCE_PASS = os.getenv("FINANCE_PASSWORD", "rpa_fin_pass")
 OA_USER = os.getenv("OA_USERNAME", "oa_staff")
 OA_PASS = os.getenv("OA_PASSWORD", "rpa_oa_pass")
+EXPENSE_USER = os.getenv("EXPENSE_USERNAME", "fin_staff")
+EXPENSE_PASS = os.getenv("EXPENSE_PASSWORD", "rpa_exp_pass")
 
 _EXPORT_TASKS: dict[str, dict[str, Any]] = {}
 _OA_SUBMISSIONS: dict[str, dict[str, Any]] = {}
+_EXPENSE_SUBMISSIONS: dict[str, dict[str, Any]] = {}
 
 CHANNELS = ["抖音信息流", "百度搜索", "小红书种草", "微信公众号", "自然流量"]
 
@@ -209,6 +212,10 @@ def _is_finance_authed(request: Request) -> bool:
 
 def _is_oa_authed(request: Request) -> bool:
     return request.cookies.get("oa_session") == "valid_oa_token"
+
+
+def _is_expense_authed(request: Request) -> bool:
+    return request.cookies.get("expense_session") == "valid_expense_token"
 
 
 def generate_finance_settlements(biz_date: str) -> list[dict[str, Any]]:
@@ -883,6 +890,261 @@ def oa_submissions_list(request: Request) -> Response:
       <div class="topbar"><h1>OA 日报审批记录</h1><div><a href="/oa/submit">新建填报</a></div></div>
       <div class="container"><div class="panel">
         <table><thead><tr><th>审批单号</th><th>日期</th><th>订单数</th><th>净销售额</th><th>ROI</th><th>风险等级</th><th>附件</th></tr></thead><tbody>{rows}</tbody></table>
+      </div></div>
+    </body></html>
+    """
+    )
+
+
+@app.get("/expense/login", response_class=HTMLResponse)
+def expense_login_page(error: str = "") -> str:
+    err_html = f'<div class="error">{error}</div>' if error else ""
+    return f"""
+    <html><head><title>企业费用报销系统登录</title>{_BASE_STYLE}</head>
+    <body>
+      <div class="topbar"><h1>企业财务费用报销平台</h1></div>
+      <div class="container login-box">
+        <div class="panel">
+          <h2>员工报销系统登录</h2>
+          {err_html}
+          <form method="post" action="/expense/login">
+            <label for="username">财务/员工账号</label>
+            <input id="username" name="username" type="text" required />
+            <label for="password">登录密码</label>
+            <input id="password" name="password" type="password" required />
+            <button id="expense-login-btn" class="btn" type="submit">登录报销平台</button>
+          </form>
+        </div>
+      </div>
+    </body></html>
+    """
+
+
+@app.post("/expense/login")
+def expense_login_submit(username: str = Form(...), password: str = Form(...)) -> Response:
+    if username == EXPENSE_USER and password == EXPENSE_PASS:
+        resp = RedirectResponse(url="/expense/submit", status_code=303)
+        resp.set_cookie(key="expense_session", value="valid_expense_token", httponly=True)
+        return resp
+    return RedirectResponse(url="/expense/login?error=报销系统账号或密码错误", status_code=303)
+
+
+@app.get("/expense/submit", response_class=HTMLResponse)
+def expense_submit_page(request: Request, date_str: str = Query("", alias="date")) -> Response:
+    if not _is_expense_authed(request):
+        return RedirectResponse(url="/expense/login", status_code=303)
+    biz_date = date_str or date.today().isoformat()
+    return HTMLResponse(
+        f"""
+    <html><head><title>自动报销填单申请</title>{_BASE_STYLE}</head>
+    <body>
+      <div class="topbar">
+        <h1>企业财务费用报销平台 · 费用报销单填报</h1>
+        <div><span>当前员工: {EXPENSE_USER}</span><a href="/expense/submissions">历史报销单</a></div>
+      </div>
+      <div class="container" style="max-width:980px;">
+        <div class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h2 style="margin:0;">新建费用报销申请单</h2>
+            <div style="font-size:15px;font-weight:700;color:var(--accent);">申请报销合计：<span id="exp-total-display">¥0.00</span></div>
+          </div>
+          <form method="post" action="/expense/submit" enctype="multipart/form-data">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+              <div>
+                <label for="exp-biz-date">报销结算日期</label>
+                <input id="exp-biz-date" name="biz_date" type="date" value="{biz_date}" required />
+              </div>
+              <div>
+                <label for="exp-applicant">申报人姓名</label>
+                <input id="exp-applicant" name="applicant" type="text" value="林小默" required />
+              </div>
+              <div>
+                <label for="exp-department">所属部门 / 成本中心</label>
+                <input id="exp-department" name="department" type="text" value="运营交付中心" required />
+              </div>
+            </div>
+            <label for="exp-remark">报销说明与AI合规审查附注</label>
+            <textarea id="exp-remark" name="remark" rows="2" style="width:100%;padding:8px 11px;border:1px solid var(--border-strong);border-radius:5px;margin-bottom:16px;font-family:inherit;"></textarea>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong style="font-size:14px;">逐张发票报销明细（已通过风控拦截筛选）</strong>
+              <button id="exp-add-row-btn" class="btn btn-secondary" type="button">+ 新增报销明细行</button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:110px;">费用类别</th>
+                  <th style="width:140px;">发票号码</th>
+                  <th>销售方名称</th>
+                  <th style="width:110px;">含税金额(元)</th>
+                  <th style="width:220px;">电子发票原件上传</th>
+                </tr>
+              </thead>
+              <tbody id="exp-rows">
+                <tr data-row-idx="0">
+                  <td>
+                    <select id="exp-cat-0" name="categories" style="width:100%;padding:6px 8px;border:1px solid var(--border-strong);border-radius:5px;background:#fff;">
+                      <option value="交通">交通</option>
+                      <option value="住宿">住宿</option>
+                      <option value="餐饮">餐饮</option>
+                      <option value="办公">办公</option>
+                      <option value="通信">通信</option>
+                    </select>
+                  </td>
+                  <td><input id="exp-inv-0" name="invoice_numbers" type="text" required style="margin-bottom:0;" /></td>
+                  <td><input id="exp-vendor-0" name="vendors" type="text" required style="margin-bottom:0;" /></td>
+                  <td><input id="exp-amt-0" name="amounts" type="text" class="exp-amt-input" required style="margin-bottom:0;" /></td>
+                  <td><input id="exp-file-0" name="files" type="file" accept=".pdf,.png,.jpg,.jpeg" required style="margin-bottom:0;" /></td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+              <button id="exp-submit-btn" class="btn" type="submit">提交报销审批单</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <script>
+        function recalcExpTotal() {{
+          let sum = 0;
+          document.querySelectorAll(".exp-amt-input").forEach(el => {{
+            const v = parseFloat(el.value || "0");
+            if (!isNaN(v)) sum += v;
+          }});
+          document.getElementById("exp-total-display").textContent = "¥" + sum.toFixed(2);
+        }}
+        document.addEventListener("input", e => {{
+          if (e.target.classList.contains("exp-amt-input")) recalcExpTotal();
+        }});
+        document.getElementById("exp-add-row-btn").addEventListener("click", () => {{
+          const tbody = document.getElementById("exp-rows");
+          const idx = tbody.querySelectorAll("tr").length;
+          const tr = document.createElement("tr");
+          tr.dataset.rowIdx = String(idx);
+          tr.innerHTML = `
+            <td>
+              <select id="exp-cat-${{idx}}" name="categories" style="width:100%;padding:6px 8px;border:1px solid var(--border-strong);border-radius:5px;background:#fff;">
+                <option value="交通">交通</option>
+                <option value="住宿">住宿</option>
+                <option value="餐饮">餐饮</option>
+                <option value="办公">办公</option>
+                <option value="通信">通信</option>
+              </select>
+            </td>
+            <td><input id="exp-inv-${{idx}}" name="invoice_numbers" type="text" required style="margin-bottom:0;" /></td>
+            <td><input id="exp-vendor-${{idx}}" name="vendors" type="text" required style="margin-bottom:0;" /></td>
+            <td><input id="exp-amt-${{idx}}" name="amounts" type="text" class="exp-amt-input" required style="margin-bottom:0;" /></td>
+            <td><input id="exp-file-${{idx}}" name="files" type="file" accept=".pdf,.png,.jpg,.jpeg" required style="margin-bottom:0;" /></td>
+          `;
+          tbody.appendChild(tr);
+        }});
+      </script>
+    </body></html>
+    """
+    )
+
+
+@app.post("/expense/submit")
+async def expense_submit_form(
+    request: Request,
+    biz_date: str = Form(...),
+    applicant: str = Form(...),
+    department: str = Form(...),
+    remark: str = Form(""),
+    categories: list[str] = Form(...),
+    invoice_numbers: list[str] = Form(...),
+    vendors: list[str] = Form(...),
+    amounts: list[str] = Form(...),
+    files: list[UploadFile] = File(...),
+) -> Response:
+    if not _is_expense_authed(request):
+        return RedirectResponse(url="/expense/login", status_code=303)
+
+    items: list[dict[str, Any]] = []
+    total_amt = 0.0
+    for idx in range(len(invoice_numbers)):
+        amt_val = float(amounts[idx]) if idx < len(amounts) else 0.0
+        total_amt += amt_val
+        up = files[idx] if idx < len(files) else None
+        raw = await up.read() if up else b""
+        items.append(
+            {
+                "category": categories[idx] if idx < len(categories) else "办公",
+                "invoice_number": invoice_numbers[idx],
+                "vendor": vendors[idx] if idx < len(vendors) else "-",
+                "amount": round(amt_val, 2),
+                "filename": up.filename if up else "invoice.pdf",
+                "file_bytes": len(raw),
+            }
+        )
+
+    ticket_id = f"EXP-{biz_date.replace('-', '')}-{len(_EXPENSE_SUBMISSIONS) + 1:03d}"
+    _EXPENSE_SUBMISSIONS[ticket_id] = {
+        "ticket_id": ticket_id,
+        "biz_date": biz_date,
+        "applicant": applicant,
+        "department": department,
+        "remark": remark,
+        "total_amount": round(total_amt, 2),
+        "items": items,
+    }
+    return RedirectResponse(url=f"/expense/receipt/{ticket_id}", status_code=303)
+
+
+@app.get("/expense/receipt/{ticket_id}", response_class=HTMLResponse)
+def expense_receipt_page(request: Request, ticket_id: str) -> Response:
+    if not _is_expense_authed(request):
+        return RedirectResponse(url="/expense/login", status_code=303)
+    rec = _EXPENSE_SUBMISSIONS.get(ticket_id)
+    if not rec:
+        return HTMLResponse("<h3>未找到对应报销单</h3>", status_code=404)
+    rows_html = "".join(
+        f"<tr><td>{it['category']}</td><td>{it['invoice_number']}</td><td>{it['vendor']}</td>"
+        f"<td class='num'>¥{it['amount']:.2f}</td><td>{it['filename']} ({it['file_bytes']} bytes)</td></tr>"
+        for it in rec["items"]
+    )
+    return HTMLResponse(
+        f"""
+    <html><head><title>报销回执 {ticket_id}</title>{_BASE_STYLE}</head>
+    <body>
+      <div class="topbar">
+        <h1>企业财务费用报销平台 · 审批回执</h1>
+        <div><a href="/expense/submit">继续报销</a><a href="/expense/submissions">全部报销记录</a></div>
+      </div>
+      <div class="container" style="max-width:860px;">
+        <div class="panel">
+          <div style="display:inline-block;background:#E6F4ED;color:#0B5D3B;border:1px solid #B5DFCA;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-bottom:10px;">报销单已提交财务审批</div>
+          <h2 style="margin:4px 0 14px 0;">报销单号：<span id="exp-ticket-id">{rec['ticket_id']}</span></h2>
+          <p style="color:var(--muted);margin-top:0;">申报人：{rec['applicant']}（{rec['department']}） · 申报日期：{rec['biz_date']} · 申请总额：<strong>¥{rec['total_amount']:.2f}</strong></p>
+          <table>
+            <thead><tr><th>类别</th><th>发票号码</th><th>销售方</th><th class="num">含税金额</th><th>电子发票附件</th></tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+          <p style="margin-top:14px;font-size:13px;color:var(--muted);">附注：{rec['remark'] or '-'}</p>
+        </div>
+      </div>
+    </body></html>
+    """
+    )
+
+
+@app.get("/expense/submissions", response_class=HTMLResponse)
+def expense_submissions_list(request: Request) -> Response:
+    if not _is_expense_authed(request):
+        return RedirectResponse(url="/expense/login", status_code=303)
+    rows = "".join(
+        f"<tr><td><a href='/expense/receipt/{r['ticket_id']}'>{r['ticket_id']}</a></td>"
+        f"<td>{r['biz_date']}</td><td>{r['applicant']}</td><td>{len(r['items'])} 张</td>"
+        f"<td class='num'>¥{r['total_amount']:.2f}</td></tr>"
+        for r in reversed(list(_EXPENSE_SUBMISSIONS.values()))
+    ) or "<tr><td colspan='5'>暂无报销提交记录</td></tr>"
+    return HTMLResponse(
+        f"""
+    <html><head><title>历史报销记录</title>{_BASE_STYLE}</head>
+    <body>
+      <div class="topbar"><h1>企业财务报销记录</h1><div><a href="/expense/submit">新建报销单</a></div></div>
+      <div class="container"><div class="panel">
+        <table><thead><tr><th>报销单号</th><th>日期</th><th>申报人</th><th>票据数</th><th class="num">申报总额</th></tr></thead><tbody>{rows}</tbody></table>
       </div></div>
     </body></html>
     """

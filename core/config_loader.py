@@ -45,7 +45,26 @@ class ConnectorsConfig(BaseModel):
     mock_ads: WebConnectorConfig = Field(default_factory=WebConnectorConfig)
     mock_finance: WebConnectorConfig = Field(default_factory=WebConnectorConfig)
     mock_oa: WebConnectorConfig = Field(default_factory=WebConnectorConfig)
+    mock_expense: WebConnectorConfig = Field(default_factory=WebConnectorConfig)
     local_drop: LocalDropConfig = Field(default_factory=LocalDropConfig)
+
+
+class ExpenseConfig(BaseModel):
+    company_name: str = "星辰智联科技有限公司"
+    company_tax_id: str = "91310115MA1K88990X"
+    applicant_name: str = "林小默"
+    department: str = "运营交付中心"
+    max_invoice_age_days: int = 30
+    auto_submit_flagged: bool = False
+    category_limits: dict[str, float] = Field(
+        default_factory=lambda: {
+            "餐饮": 200.0,
+            "交通": 300.0,
+            "住宿": 500.0,
+            "办公": 1000.0,
+            "通信": 300.0,
+        }
+    )
 
 
 class SourceSpec(BaseModel):
@@ -106,16 +125,20 @@ class StoragePaths(BaseModel):
     logs: Path
     backups: Path | None = None
     live_frames: Path | None = None
+    invoices: Path | None = None
 
     def model_post_init(self, __context: Any) -> None:
         if self.backups is None:
             self.backups = self.root / "backups"
         if self.live_frames is None:
             self.live_frames = self.root / "live_frames"
+        if self.invoices is None:
+            self.invoices = self.root / "invoices"
 
     def ensure_all(self) -> None:
         assert self.backups is not None
         assert self.live_frames is not None
+        assert self.invoices is not None
         for path in (
             self.root,
             self.auth_states,
@@ -126,6 +149,7 @@ class StoragePaths(BaseModel):
             self.logs,
             self.backups,
             self.live_frames,
+            self.invoices,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -138,6 +162,7 @@ class AppConfig(BaseModel):
     connectors: ConnectorsConfig = Field(default_factory=ConnectorsConfig)
     jobs: list[JobDefinition] = Field(default_factory=list)
     thresholds: ThresholdConfig = Field(default_factory=ThresholdConfig)
+    expense: ExpenseConfig = Field(default_factory=ExpenseConfig)
     notifier: NotifierConfig = Field(default_factory=NotifierConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
@@ -226,6 +251,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         logs=storage_root / "logs",
         backups=storage_root / "backups",
         live_frames=storage_root / "live_frames",
+        invoices=storage_root / "invoices",
     )
     storage_paths.ensure_all()
 
@@ -241,5 +267,6 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         cfg.connectors.mock_ads.base_url = mock_base_url.rstrip("/")
         cfg.connectors.mock_finance.base_url = mock_base_url.rstrip("/")
         cfg.connectors.mock_oa.base_url = mock_base_url.rstrip("/")
+        cfg.connectors.mock_expense.base_url = mock_base_url.rstrip("/")
 
     return cfg

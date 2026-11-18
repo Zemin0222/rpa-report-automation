@@ -459,11 +459,14 @@
     }
 
     .kpi-val {
-      font-size: 22px;
+      font-size: clamp(16px, 1.45vw, 22px);
       font-weight: 700;
       color: var(--ink);
       letter-spacing: -0.02em;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .kpi-val.ok { color: var(--ok-ink); }
     .kpi-val.err { color: var(--err-ink); }
@@ -781,6 +784,40 @@
       padding: 10px 12px;
       font-size: 12px;
       color: var(--ink-2);
+    }
+
+    /* Expense Invoice Inspector */
+    .inv-thumb-box {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #F8F7F4;
+      overflow: hidden;
+      margin-bottom: 14px;
+      cursor: zoom-in;
+    }
+    .inv-thumb-box img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .kv-grid {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      border-top: 1px solid var(--border);
+      font-size: 12.5px;
+    }
+    .kv-k {
+      padding: 7px 10px 7px 0;
+      color: var(--ink-muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+    .kv-v {
+      padding: 7px 0;
+      color: var(--ink);
+      border-bottom: 1px solid var(--border);
+      word-break: break-word;
+      font-variant-numeric: tabular-nums;
     }
 
     /* Lightbox & Auth Dialog */
@@ -1406,6 +1443,8 @@ python main.py doctor</pre>
       chSearch: "",
       recFilter: "all",
       recSearch: "",
+      expFilter: "all",
+      selectedInvoiceIdx: 0,
       busy: false,
       timerHandle: null,
       liveSession: null,
@@ -1425,6 +1464,7 @@ python main.py doctor</pre>
 
     const JOB_LABELS = {
       daily_ops_report: "每日全渠道对账与 OA 日报",
+      expense_reimburse: "发票智能识别与自动报销",
     };
 
     const RUN_STATUS_LABELS = {
@@ -1444,6 +1484,10 @@ python main.py doctor</pre>
       etl_and_reconcile: "数据汇总与三方自动对账",
       render_reports: "生成 Excel 日报与 Word 周报",
       submit_oa_report: "自动登录 OA 填写并提交日报",
+      collect_invoices: "读取并解析待报销电子发票",
+      audit_invoices: "发票合规审核（重复/超标/抬头）",
+      submit_expense_claim: "登录报销系统逐张填单并上传原件",
+      render_expense_report: "导出报销台账 Excel 表",
       notify: "推送工作群卡片与邮件通知",
       simulate_failure_drill: "模拟系统故障与自动截图留痕",
       error: "异常中断与自动留痕截图",
@@ -1531,6 +1575,15 @@ python main.py doctor</pre>
       "#oa-report-file": "「Excel 日报附件」上传框",
       "#oa-submit-btn": "「确认提交日报」按钮",
       "#oa-ticket-id": "OA 审批回执单号",
+      "#expense-login-btn": "报销平台登录按钮",
+      "#exp-biz-date": "「报销结算日期」输入框",
+      "#exp-applicant": "「申报人姓名」输入框",
+      "#exp-department": "「所属部门」输入框",
+      "#exp-remark": "「风控审查附注」文本框",
+      "#exp-add-row-btn": "「+ 新增报销明细行」按钮",
+      "#exp-submit-btn": "「提交报销审批单」按钮",
+      "#exp-ticket-id": "报销审批回执单号",
+      expense_rules: "发票合规风控审核引擎",
       run_etl: "本地对账清洗引擎",
     };
 
@@ -1572,7 +1625,10 @@ python main.py doctor</pre>
         return `汇总 ${ch} 个渠道 · 异常 ${an} 个 · 对账差异 ${df} 笔`;
       }
       if (text.startsWith("ticket=")) {
-        return `OA 回执单号：${text.slice(7)}`;
+        const tid = text.split(",")[0].slice(7).trim();
+        const extra = text.match(/approved=(\d+)/);
+        const prefix = tid.startsWith("EXP-") ? "财务报销单号" : "OA 回执单号";
+        return extra ? `${prefix}：${tid} · 已附 ${extra[1]} 张发票` : `${prefix}：${tid}`;
       }
       return text;
     }
@@ -1581,6 +1637,17 @@ python main.py doctor</pre>
       const t = String(target || "").trim();
       if (!t) return "";
       if (TARGET_ELEMENT_LABELS[t]) return `操作控件：${TARGET_ELEMENT_LABELS[t]}`;
+      const rowMatch = t.match(/^#exp-(cat|inv|vendor|amt|file)-(\d+)$/);
+      if (rowMatch) {
+        const fieldNames = {
+          cat: "「费用类别」下拉框",
+          inv: "「发票号码」输入框",
+          vendor: "「销售方名称」输入框",
+          amt: "「含税金额」输入框",
+          file: "「发票原件 PDF」上传框",
+        };
+        return `操作控件：第 ${Number(rowMatch[2]) + 1} 行${fieldNames[rowMatch[1]]}`;
+      }
       if (t.startsWith("http://") || t.startsWith("https://")) {
         try {
           const u = new URL(t);
@@ -1735,7 +1802,7 @@ python main.py doctor</pre>
         <button class="date-pill ${dt === d.selected_date ? "active" : ""}" data-date="${esc(dt)}" type="button">${esc(dt.slice(5))}</button>
       `).join("");
 
-      renderOverviewByWorkflow(d.active_run, activeMeta);
+      renderOverviewByWorkflow(d.active_run, activeMeta, d);
       renderTrends(d.trend, d.config_summary.thresholds.min_roi);
       renderReportsAndCard(d.active_run, d.notify_card);
       renderAudit(d.runs, d.latest_run_steps);
@@ -1743,7 +1810,7 @@ python main.py doctor</pre>
       renderOps(d.doctor, d.storage_usage, d.config_summary);
     }
 
-    function renderOverviewByWorkflow(run, activeMeta) {
+    function renderOverviewByWorkflow(run, activeMeta, fullState) {
       const viewType = (run && run.view_type) || (activeMeta && activeMeta.view_type) || "daily_ops";
       const dailyWrap = document.getElementById("overview-daily-ops");
       const genWrap = document.getElementById("overview-generic");
@@ -1763,19 +1830,190 @@ python main.py doctor</pre>
       const k = (run && run.kpi) || {};
       const cards = Array.isArray(k.cards) ? k.cards : [];
       if (cards.length > 0) {
-        kpiEl.innerHTML = cards.slice(0, 5).map(c => `
+        kpiEl.innerHTML = cards.slice(0, 5).map(c => {
+          const valStr = String(c.value ?? "-");
+          const compactStyle = valStr.length > 11 ? ' style="font-size:15.5px;letter-spacing:-0.01em;"' : "";
+          return `
           <div class="kpi-cell">
             <div class="kpi-label">${esc(c.label || "")}</div>
-            <div class="kpi-val ${esc(c.tone || "")}">${esc(c.value ?? "-")}</div>
+            <div class="kpi-val ${esc(c.tone || "")}"${compactStyle} title="${esc(valStr)}">${esc(valStr)}</div>
             <div class="kpi-sub">${esc(c.sub || "")}</div>
           </div>
-        `).join("");
+        `;
+        }).join("");
       } else {
-        kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">暂无「${esc(activeMeta?.title || viewType)}」的已完成数据，请点击左侧「观看机器人实时操作」或「后台静默跑批」。</div>`;
+        kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">暂无「${esc(activeMeta?.title || viewType)}」的已执行记录，可上传发票后点击左侧「观看机器人实时操作」或「后台静默跑批」。</div>`;
       }
+
+      if (viewType === "expense") {
+        renderExpenseOverview(run, fullState, genWrap);
+        return;
+      }
+
       genWrap.innerHTML = run && run.summary_text
         ? `<div class="panel"><div class="panel-title"><span>业务处理结果摘要 (${esc(run.biz_date)})</span></div><pre class="summary-pre">${esc(run.summary_text)}</pre></div>`
         : "";
+    }
+
+    function renderExpenseOverview(run, fullState, container) {
+      const k = (run && run.kpi) || {};
+      const allInvoices = Array.isArray(k.invoices) ? k.invoices : [];
+      const pendingFiles = (fullState && fullState.invoice_files) || [];
+      let rows = allInvoices;
+      if (state.expFilter === "approved") rows = rows.filter(i => i.status === "合规待提交");
+      if (state.expFilter === "flagged") rows = rows.filter(i => i.status === "规则拦截");
+      if (state.selectedInvoiceIdx >= rows.length) state.selectedInvoiceIdx = 0;
+
+      const selected = rows[state.selectedInvoiceIdx] || null;
+
+      let tableHtml = "";
+      if (allInvoices.length === 0) {
+        if (pendingFiles.length > 0) {
+          tableHtml = `<tr><td colspan="4" class="empty-state">已就绪 ${pendingFiles.length} 张待审发票，点击左侧「观看机器人实时操作」或「后台静默跑批」开始识别与报销。</td></tr>`;
+        } else {
+          tableHtml = `<tr><td colspan="4" class="empty-state">暂无发票文件：点击上方「生成演示样本 (6张)」或上传 PDF/图片，再运行流程即可观看自动填报。</td></tr>`;
+        }
+      } else if (rows.length === 0) {
+        tableHtml = `<tr><td colspan="4" class="empty-state">当前筛选条件下无匹配发票</td></tr>`;
+      } else {
+        const summarizeRisk = r => {
+          if (r.includes("超标")) return "费用超标";
+          if (r.includes("抬头")) return "抬头不符";
+          if (r.includes("识别号")) return "税号不符";
+          if (r.includes("重复")) return "重复报销";
+          if (r.includes("超期")) return "发票超期";
+          if (r.includes("缺失")) return "字段缺失";
+          return r;
+        };
+        tableHtml = rows.map((inv, idx) => {
+          const isOk = inv.status === "合规待提交";
+          const isSel = idx === state.selectedInvoiceIdx;
+          const srcLabel = inv.extract_source === "ai" ? "AI 识别" : "规则解析";
+          const confPct = Math.round(Number(inv.confidence || 0) * 100);
+          const shortTags = isOk
+            ? `<span class="badge badge-ok">合规自动填报</span>`
+            : `<div style="display:flex;flex-wrap:wrap;gap:4px;" title="${esc((inv.risk_reasons || []).join('；'))}">${(inv.risk_reasons || []).map(r => `<span class="badge badge-err">${esc(summarizeRisk(r))}</span>`).join("")}</div>`;
+          return `
+            <tr class="clickable ${isSel ? "selected-row" : ""}" data-inv-idx="${idx}">
+              <td>
+                <div style="font-weight:600;">${esc(inv.seller_name)}</div>
+                <div class="mono" style="font-size:11.5px;color:var(--ink-muted);">#${esc(inv.invoice_number)} · ${esc(inv.issue_date)}</div>
+              </td>
+              <td class="r nowrap">
+                <div style="font-weight:700;">${fmtMoney(inv.total_amount)}</div>
+                <span class="badge badge-neutral" style="margin-top:2px;">${esc(inv.category)}</span>
+              </td>
+              <td class="nowrap">
+                <span class="badge ${inv.extract_source === "ai" ? "badge-info" : "badge-neutral"}">${srcLabel} ${confPct}%</span>
+              </td>
+              <td>${shortTags}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      let inspectorHtml = `<div class="empty-state">点击左侧列表中的任意发票，查看原件缩略图与字段识别详情。</div>`;
+      if (selected) {
+        const thumbHtml = selected.thumbnail_url
+          ? `<div class="inv-thumb-box" data-zoom-src="${esc(selected.thumbnail_url)}" data-zoom-title="${esc(selected.file_name)}"><img src="${esc(selected.thumbnail_url)}" alt="发票原件缩略图" /></div>`
+          : "";
+        inspectorHtml = `
+          ${thumbHtml}
+          <div class="kv-grid">
+            <div class="kv-k">发票代码 / 号码</div><div class="kv-v mono">${esc(selected.invoice_code || "-")} / ${esc(selected.invoice_number)}</div>
+            <div class="kv-k">开票日期</div><div class="kv-v mono">${esc(selected.issue_date)}</div>
+            <div class="kv-k">购买方名称</div><div class="kv-v">${esc(selected.buyer_name)}</div>
+            <div class="kv-k">纳税人识别号</div><div class="kv-v mono">${esc(selected.buyer_tax_id)}</div>
+            <div class="kv-k">销售方名称</div><div class="kv-v">${esc(selected.seller_name)}</div>
+            <div class="kv-k">费用类别</div><div class="kv-v">${esc(selected.category)}（单笔上限 ${fmtMoney(selected.limit_amount)}）</div>
+            <div class="kv-k">价税合计</div><div class="kv-v" style="font-weight:700;">${fmtMoney(selected.total_amount)} <span style="color:var(--ink-muted);font-weight:400;">(不含税 ${fmtMoney(selected.amount_excl_tax)} + 税 ${fmtMoney(selected.tax_amount)})</span></div>
+            <div class="kv-k">审核状态</div><div class="kv-v">${selected.status === "合规待提交" ? '<span class="badge badge-ok">合规待自动提交</span>' : esc((selected.risk_reasons || []).join("；"))}</div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = `
+        <div class="section-head">
+          <h2>发票识别与风控审查工作台<span class="section-meta">点击表格行可对照票面原件与抽取字段</span></h2>
+          <div class="toolbar">
+            <div class="filter-pills" id="exp-filter-pills">
+              <button class="filter-pill ${state.expFilter === "all" ? "active" : ""}" data-filter="all" type="button">全部 (${allInvoices.length})</button>
+              <button class="filter-pill ${state.expFilter === "approved" ? "active" : ""}" data-filter="approved" type="button">合规自动提交</button>
+              <button class="filter-pill ${state.expFilter === "flagged" ? "active" : ""}" data-filter="flagged" type="button">风控拦截</button>
+            </div>
+            <button id="btn-exp-upload" class="btn btn-secondary btn-sm" type="button">上传电子发票</button>
+            <button id="btn-exp-samples" class="btn btn-secondary btn-sm" type="button">生成演示样本 (6张)</button>
+            <input id="exp-upload-input" type="file" accept=".pdf,.png,.jpg,.jpeg" style="display:none;" />
+          </div>
+        </div>
+        <div class="split-2">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>销售方与票号</th>
+                  <th class="r">金额与类别</th>
+                  <th>识别来源</th>
+                  <th>审核结论</th>
+                </tr>
+              </thead>
+              <tbody id="exp-tbody">${tableHtml}</tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-title">
+              <span>票面原件与字段核验</span>
+              <span class="mono" style="color:var(--ink-muted);font-weight:400;">${selected ? esc(selected.file_name) : ""}</span>
+            </div>
+            ${inspectorHtml}
+          </div>
+        </div>
+      `;
+
+      document.getElementById("exp-filter-pills")?.addEventListener("click", e => {
+        const btn = e.target.closest(".filter-pill");
+        if (!btn) return;
+        state.expFilter = btn.dataset.filter;
+        state.selectedInvoiceIdx = 0;
+        renderExpenseOverview(run, fullState, container);
+      });
+      document.getElementById("exp-tbody")?.addEventListener("click", e => {
+        const tr = e.target.closest("tr[data-inv-idx]");
+        if (!tr) return;
+        state.selectedInvoiceIdx = Number(tr.dataset.invIdx);
+        renderExpenseOverview(run, fullState, container);
+      });
+      container.querySelector("[data-zoom-src]")?.addEventListener("click", e => {
+        const el = e.currentTarget;
+        document.getElementById("dlg-shot-title").textContent = el.dataset.zoomTitle || "invoice.png";
+        document.getElementById("dlg-shot-img").src = el.dataset.zoomSrc;
+        document.getElementById("shot-dialog").showModal();
+      });
+      const upInput = document.getElementById("exp-upload-input");
+      document.getElementById("btn-exp-upload")?.addEventListener("click", () => upInput?.click());
+      upInput?.addEventListener("change", async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const res = await api("/api/expense/upload", { method: "POST", body: fd });
+          toast(`已上传发票 ${res.filename}，请点击运行开始解析与报销`, "ok");
+          await loadState();
+        } catch (err) {
+          toast("上传发票失败：" + err.message, "err");
+        }
+      });
+      document.getElementById("btn-exp-samples")?.addEventListener("click", async () => {
+        try {
+          const dt = document.getElementById("run-date-input").value || state.data?.today;
+          const res = await api(`/api/expense/samples?biz_date=${encodeURIComponent(dt)}`, { method: "POST" });
+          toast(`已生成 ${res.generated} 张演示发票样本，请点击「观看机器人实时操作」`, "ok");
+          await loadState();
+        } catch (err) {
+          toast("生成样本失败：" + err.message, "err");
+        }
+      });
     }
 
     function renderKpiLedger(run) {
@@ -2040,15 +2278,19 @@ python main.py doctor</pre>
 
       pre.textContent = run.summary_text || "暂无摘要文本。";
       const dt = esc(run.biz_date);
+      const isExpense = run.workflow_key === "expense_reimburse" || run.view_type === "expense";
       const btns = [];
       if (run.has_excel) {
-        btns.push(`<a class="btn btn-primary btn-sm" href="/api/download/excel/${dt}">下载 Excel 日报 (.xlsx)</a>`);
+        const xlKind = isExpense ? "expense_excel" : "excel";
+        const xlLbl = isExpense ? "下载报销汇总台账 (.xlsx)" : "下载 Excel 日报 (.xlsx)";
+        btns.push(`<a class="btn btn-primary btn-sm" href="/api/download/${xlKind}/${dt}">${xlLbl}</a>`);
       }
       if (run.has_word) {
         btns.push(`<a class="btn btn-secondary btn-sm" href="/api/download/word/${dt}">下载 Word 周报 (.docx)</a>`);
       }
       if (run.has_notify) {
-        btns.push(`<a class="btn btn-secondary btn-sm" href="/api/download/notify/${dt}">下载群消息备份 (.json)</a>`);
+        const nfKind = isExpense ? "expense_notify" : "notify";
+        btns.push(`<a class="btn btn-secondary btn-sm" href="/api/download/${nfKind}/${dt}">下载群消息备份 (.json)</a>`);
       }
       dlStrip.innerHTML = btns.join("");
 
@@ -2522,7 +2764,9 @@ python main.py doctor</pre>
       badge.textContent = stLabels[st] || st;
       elapsedEl.textContent = `${Number(sess.elapsed_sec || 0).toFixed(1)}s`;
       if (sess.outcome && sess.outcome.oa_ticket_id) {
-        metaEl.textContent = `最近演示已完成 · OA 审批回执单号: ${sess.outcome.oa_ticket_id}`;
+        const tid = String(sess.outcome.oa_ticket_id);
+        const lbl = tid.startsWith("EXP-") ? "报销财务回执单号" : "OA 审批回执单号";
+        metaEl.textContent = `最近演示已完成 · ${lbl}: ${tid}`;
       }
 
       const events = sess.events || [];
@@ -2604,23 +2848,29 @@ python main.py doctor</pre>
           }),
         });
         const sid = created.session_id;
+        let finishing = false;
         state.livePollHandle = setInterval(async () => {
+          if (finishing) return;
           try {
             const res = await api(`/api/live/${encodeURIComponent(sid)}`);
             const sess = res.session;
             renderLiveSession(sess, true);
             if (sess.status !== "RUNNING") {
+              finishing = true;
               clearInterval(state.livePollHandle);
-              setBusy(false);
               if (sess.status === "SUCCESS") {
-                const ticket = sess.outcome?.oa_ticket_id ? ` · OA 回执 ${sess.outcome.oa_ticket_id}` : "";
-                toast(`可视化跑批完成${ticket}`, "ok");
                 state.selectedDate = sess.biz_date;
                 state.selectedRunId = sess.outcome?.run_id || state.selectedRunId;
+              }
+              await loadState(state.selectedJob, state.selectedDate);
+              setBusy(false);
+              if (sess.status === "SUCCESS") {
+                const tid = sess.outcome?.oa_ticket_id || "";
+                const ticket = tid ? ` · 回执 ${tid}` : "";
+                toast(`可视化流程完成${ticket}`, "ok");
               } else {
                 toast(`执行结束: ${sess.status}`, "warn");
               }
-              await loadState(state.selectedJob, state.selectedDate);
             }
           } catch {}
         }, 300);

@@ -24,6 +24,7 @@ from core.doctor import run_doctor_checks
 from core.housekeeping import cleanup_storage, get_storage_usage_mb
 from core.live_observer import LiveRunTracker
 from core.pipeline import run_backfill_pipeline, run_daily_pipeline
+from mock_systems.invoice_factory import populate_sample_invoices, render_invoice_thumbnail
 from notifiers.webhook import send_failure_alert
 from storage.state_db import StateDB
 from workflows.registry import get_workflow, list_workflows
@@ -31,6 +32,7 @@ from workflows.registry import get_workflow, list_workflows
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 CONSOLE_HTML_PATH = TEMPLATES_DIR / "console.html"
 ALLOWED_DROPZONE_EXTS = {".csv", ".xlsx", ".xls", ".pdf"}
+ALLOWED_INVOICE_EXTS = {".pdf", ".png", ".jpg", ".jpeg"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 app = FastAPI(title="RPA 跨系统数据搬运与自动对账工作台")
@@ -294,6 +296,23 @@ def get_state(
                 }
             )
 
+    invoice_files = []
+    inv_dir = cfg.storage.invoices
+    assert inv_dir is not None
+    for item in sorted(inv_dir.iterdir(), key=lambda p: p.name.lower()):
+        if item.is_file() and not item.name.startswith(".") and item.suffix.lower() in ALLOWED_INVOICE_EXTS:
+            st_info = item.stat()
+            thumb_file = inv_dir / ".thumbs" / (f"{item.stem}.png" if item.suffix.lower() != ".png" else item.name)
+            invoice_files.append(
+                {
+                    "name": item.name,
+                    "size_kb": round(st_info.st_size / 1024, 1),
+                    "ext": item.suffix.lower().lstrip("."),
+                    "modified_at": datetime.fromtimestamp(st_info.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "thumb_url": f"/api/expense/thumb/{thumb_file.name}" if thumb_file.exists() else "",
+                }
+            )
+
     return {
         "today": date.today().isoformat(),
         "jobs": available_jobs,
@@ -318,6 +337,7 @@ def get_state(
         "latest_run_steps": latest_run_steps,
         "screenshots": screenshots,
         "dropzone_files": dropzone_files,
+        "invoice_files": invoice_files,
         "doctor": run_doctor_checks(cfg),
         "storage_usage": get_storage_usage_mb(cfg.storage),
         "config_summary": {
@@ -494,24 +514,32 @@ def ops_test_alert(payload: TestAlertRequest, request: Request) -> dict[str, Any
     return {"filename": alert_path.name, "card": card_data}
 
 
-@app.post("/api/dropzone/upload")
-def upload_dropzone_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    _require_auth(request)
-    cfg = load_config()
+def _save_validated_upload(
+    file: UploadFile,
+    target_dir: Path,
+    allowed_exts: set[str],
+) -> tuple[str, Path, bytes]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     clean_name = Path(file.filename).name
-    if Path(clean_name).suffix.lower() not in ALLOWED_DROPZONE_EXTS:
+    if Path(clean_name).suffix.lower() not in allowed_exts:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件格式，请上传 {', '.join(sorted(ALLOWED_DROPZONE_EXTS))}",
+            detail=f"不支持的文件格式，请上传 {', '.join(sorted(allowed_exts))}",
         )
     content = file.file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件超过 25MB 限制")
-
-    dest = _safe_child_path(cfg.storage.dropzone, clean_name)
+    dest = _safe_child_path(target_dir, clean_name)
     dest.write_bytes(content)
+    return clean_name, dest, content
+
+
+@app.post("/api/dropzone/upload")
+def upload_dropzone_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    _require_auth(request)
+    cfg = load_config()
+    clean_name, _, content = _save_validated_upload(file, cfg.storage.dropzone, ALLOWED_DROPZONE_EXTS)
     return {"filename": clean_name, "size_kb": round(len(content) / 1024, 1)}
 
 
@@ -526,9 +554,83 @@ def delete_dropzone_file(filename: str, request: Request) -> dict[str, Any]:
     return {"deleted": filename}
 
 
+@app.post("/api/expense/upload")
+def upload_invoice_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    _require_auth(request)
+    cfg = load_config()
+    inv_dir = cfg.storage.invoices
+    assert inv_dir is not None
+    inv_dir.mkdir(parents=True, exist_ok=True)
+    clean_name, dest, content = _save_validated_upload(file, inv_dir, ALLOWED_INVOICE_EXTS)
+    thumb_dir = inv_dir / ".thumbs"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    thumb_name = f"{dest.stem}.png" if dest.suffix.lower() != ".png" else dest.name
+    if dest.suffix.lower() == ".pdf":
+        try:
+            (thumb_dir / thumb_name).write_bytes(render_invoice_thumbnail(content))
+        except Exception:
+            pass
+    elif dest.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+        (thumb_dir / thumb_name).write_bytes(content)
+    return {"filename": clean_name, "size_kb": round(len(content) / 1024, 1)}
+
+
+@app.post("/api/expense/samples")
+def generate_expense_samples(request: Request, biz_date: str | None = None) -> dict[str, Any]:
+    _require_auth(request)
+    cfg = load_config()
+    inv_dir = cfg.storage.invoices
+    assert inv_dir is not None
+    target_date = _validate_date(biz_date) if biz_date else date.today().isoformat()
+    created = populate_sample_invoices(
+        inv_dir,
+        target_date,
+        cfg.expense.company_name,
+        cfg.expense.company_tax_id,
+        overwrite=True,
+    )
+    thumb_dir = inv_dir / ".thumbs"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    for pdf_path in created:
+        (thumb_dir / f"{pdf_path.stem}.png").write_bytes(
+            render_invoice_thumbnail(pdf_path.read_bytes())
+        )
+    return {"generated": len(created), "files": [p.name for p in created]}
+
+
+@app.delete("/api/expense/files/{filename}")
+def delete_invoice_file(filename: str, request: Request) -> dict[str, Any]:
+    _require_auth(request)
+    cfg = load_config()
+    inv_dir = cfg.storage.invoices
+    assert inv_dir is not None
+    target = _safe_child_path(inv_dir, filename)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Invoice file not found")
+    target.unlink()
+    thumb = inv_dir / ".thumbs" / f"{target.stem}.png"
+    thumb.unlink(missing_ok=True)
+    return {"deleted": filename}
+
+
+@app.get("/api/expense/thumb/{filename}")
+def get_invoice_thumbnail(filename: str, request: Request) -> FileResponse:
+    _require_auth(request)
+    cfg = load_config()
+    inv_dir = cfg.storage.invoices
+    assert inv_dir is not None
+    thumb_dir = inv_dir / ".thumbs"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    target = _safe_child_path(thumb_dir, filename)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    media = "image/jpeg" if target.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    return FileResponse(path=target, media_type=media, filename=target.name)
+
+
 @app.get("/api/download/{kind}/{biz_date}")
 def download_artifact(
-    kind: Literal["excel", "word", "notify", "alert"],
+    kind: Literal["excel", "word", "notify", "alert", "expense_excel", "expense_notify"],
     biz_date: str,
     request: Request,
 ) -> FileResponse:
@@ -546,6 +648,11 @@ def download_artifact(
         ),
         "notify": (f"notify_preview_{clean_date}.json", "application/json"),
         "alert": (f"alert_preview_{clean_date}.json", "application/json"),
+        "expense_excel": (
+            f"expense_report_{clean_date}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        "expense_notify": (f"expense_notify_{clean_date}.json", "application/json"),
     }
     filename, media_type = file_map[kind]
     target = _safe_child_path(cfg.storage.outputs, filename)
