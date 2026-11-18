@@ -1,0 +1,67 @@
+services:
+  rpa-scheduler:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-scheduler
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - RPA_HEADLESS=true
+      - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+    volumes:
+      - ./config:/app/config
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/storage/state.db').execute('SELECT 1')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "main.py", "schedule"]
+
+  rpa-dashboard:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-dashboard
+    restart: unless-stopped
+    shm_size: "1gb"
+    ports:
+      - "${DASHBOARD_BIND_IP:-0.0.0.0}:8501:8501"
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - RPA_HEADLESS=true
+      - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+    volumes:
+      - ./config:/app/config
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    command: ["python", "main.py", "console", "--host", "0.0.0.0", "--port", "8501"]
+
+  mock-systems:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-mock-systems
+    profiles: ["demo"]
+    ports:
+      - "8765:8765"
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "main.py", "mock-server", "--host", "0.0.0.0", "--port", "8765"]

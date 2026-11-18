@@ -1,0 +1,97 @@
+job_name: daily_ops_report
+timezone: Asia/Shanghai
+schedule:
+  daily_cron: "30 8 * * *"   # 每天 08:30 自动执行日报
+  weekly_cron: "0 9 * * 1"   # 每周一 09:00 生成周报汇总
+
+browser:
+  headless: true
+  timeout_ms: 15000
+  slow_mo_ms: 0
+
+connectors:
+  mock_crm:
+    enabled: true
+    base_url: "http://127.0.0.1:8765"
+    username_env: "CRM_USERNAME"
+    password_env: "CRM_PASSWORD"
+    default_username: "ops_admin"
+    default_password: "rpa_demo_pass"
+  mock_ads:
+    enabled: true
+    base_url: "http://127.0.0.1:8765"
+    username_env: "ADS_USERNAME"
+    password_env: "ADS_PASSWORD"
+    default_username: "ads_manager"
+    default_password: "rpa_ads_pass"
+  mock_finance:
+    enabled: true
+    base_url: "http://127.0.0.1:8765"
+    username_env: "FINANCE_USERNAME"
+    password_env: "FINANCE_PASSWORD"
+    default_username: "fin_admin"
+    default_password: "rpa_fin_pass"
+  mock_oa:
+    enabled: true
+    base_url: "http://127.0.0.1:8765"
+    username_env: "OA_USERNAME"
+    password_env: "OA_PASSWORD"
+    default_username: "oa_staff"
+    default_password: "rpa_oa_pass"
+  local_drop:
+    enabled: true
+    drop_dir: "storage/dropzone"
+
+jobs:
+  - job_name: daily_ops_report
+    enabled: true
+    daily_cron: "30 8 * * *"
+    weekly_cron: "0 9 * * 1"
+    sources:
+      - id: crm_orders
+        connector: mock_crm
+        role: orders
+        enabled: true
+        column_mapping: {}
+      - id: ads_spend
+        connector: mock_ads
+        role: ads
+        enabled: true
+      - id: finance_spa
+        connector: mock_finance
+        role: finance
+        enabled: true
+      - id: mail_attachments
+        connector: imap_mail
+        role: extra_cost
+        enabled: false
+        deduplicate: true
+        params:
+          subject_keyword: "每日渠道消耗"
+      - id: local_drop
+        connector: local_drop
+        role: extra_cost
+        enabled: true
+        deduplicate: false
+        archive_after_read: false
+
+thresholds:
+  min_roi: 2.0
+  max_sales_drop_pct: 20.0
+  max_refund_rate_pct: 15.0
+  max_reconcile_diff_yuan: 1.0
+
+notifier:
+  dry_run: true
+  channel: "feishu"   # feishu / dingtalk
+  email_enabled: false
+
+llm:
+  enabled: false
+  model: "gpt-4o-mini"
+
+retention:
+  downloads_days: 14
+  screenshots_days: 14
+  outputs_days: 90
+  logs_days: 30
