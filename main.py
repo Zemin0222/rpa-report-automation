@@ -5,6 +5,7 @@ from datetime import date
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.demo_guard import is_demo_mode, reset_demo_data
 from core.browser import BrowserManager
 from core.config_loader import AppConfig, load_config
 from core.doctor import run_doctor_checks
@@ -105,6 +106,13 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo_reset(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    summary = reset_demo_data(cfg, seed_days=args.days, seed_jobs=not args.no_seed)
+    logger.info("Demo reset finished: %s", summary)
+    return 0
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     cfg = load_config()
     checks = run_doctor_checks(cfg)
@@ -148,6 +156,17 @@ def cmd_schedule(_: argparse.Namespace) -> int:
             job_def.daily_cron,
             job_def.weekly_cron,
         )
+
+    if is_demo_mode():
+        reset_trigger = CronTrigger.from_crontab("30 3 * * *", timezone=cfg.timezone)
+        scheduler.add_job(
+            lambda: reset_demo_data(load_config(), seed_days=7, seed_jobs=True),
+            trigger=reset_trigger,
+            id="demo_nightly_reset",
+            name="Nightly Public Demo Data Reset",
+            replace_existing=True,
+        )
+        logger.info("DEMO_MODE=1 active: registered nightly demo reset job at 03:30 (%s)", cfg.timezone)
 
     try:
         scheduler.start()
@@ -214,6 +233,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean = sub.add_parser("cleanup", help="Purge expired downloads, screenshots, logs, and old outputs")
     p_clean.add_argument("--dry-run", action="store_true", help="Preview files to remove without deleting")
     p_clean.set_defaults(func=cmd_cleanup)
+
+    p_reset = sub.add_parser("demo-reset", help="Reset demo database/outputs and re-seed 7-day data")
+    p_reset.add_argument("--days", type=int, default=7, help="Number of historical days to seed (default: 7)")
+    p_reset.add_argument("--no-seed", action="store_true", help="Clear demo tables/files without re-running jobs")
+    p_reset.set_defaults(func=cmd_demo_reset)
 
     p_doc = sub.add_parser("doctor", help="Verify runtime, DB WAL, auth states, disk space & secrets")
     p_doc.set_defaults(func=cmd_doctor)

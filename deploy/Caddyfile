@@ -1,0 +1,20 @@
+# Caddy 自动 HTTPS 反向代理模板
+# 上线绑定域名：在 config/.env 中设置 RPA_DOMAIN=rpa.yourdomain.com（Caddy 自动申请/续期 Let's Encrypt 证书）
+# 调试期无域名时保持默认 :80 即可
+{$RPA_DOMAIN::80} {
+	encode zstd gzip
+
+	request_body {
+		max_size 32MB
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	reverse_proxy rpa-dashboard:8501 {
+		header_up X-Real-IP {remote_host}
+	}
+}

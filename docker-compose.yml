@@ -12,6 +12,8 @@ services:
       - TZ=Asia/Shanghai
       - RPA_HEADLESS=true
       - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+      - DEMO_MODE=${DEMO_MODE:-0}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
     volumes:
       - ./config:/app/config
       - ./storage:/app/storage
@@ -38,6 +40,8 @@ services:
       - TZ=Asia/Shanghai
       - RPA_HEADLESS=true
       - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+      - DEMO_MODE=${DEMO_MODE:-0}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
     volumes:
       - ./config:/app/config
       - ./storage:/app/storage

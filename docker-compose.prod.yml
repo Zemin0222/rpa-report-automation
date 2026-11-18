@@ -1,0 +1,101 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: rpa-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      - RPA_DOMAIN=${RPA_DOMAIN:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      rpa-dashboard:
+        condition: service_healthy
+
+  mock-systems:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-mock-systems
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "main.py", "mock-server", "--host", "0.0.0.0", "--port", "8765"]
+
+  rpa-dashboard:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-dashboard
+    restart: unless-stopped
+    shm_size: "1gb"
+    mem_limit: 1536m
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - RPA_HEADLESS=true
+      - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+      - DEMO_MODE=${DEMO_MODE:-1}
+      - DEMO_RATE_LIMIT_MAX=${DEMO_RATE_LIMIT_MAX:-2}
+      - DEMO_RATE_LIMIT_WINDOW_SEC=${DEMO_RATE_LIMIT_WINDOW_SEC:-600}
+      - DEMO_MAX_QUEUE=${DEMO_MAX_QUEUE:-10}
+    volumes:
+      - ./config:/app/config
+      - ./storage:/app/storage
+    depends_on:
+      mock-systems:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/api/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    command: ["python", "main.py", "console", "--host", "0.0.0.0", "--port", "8501"]
+
+  rpa-scheduler:
+    build: .
+    image: rpa-report-automation:latest
+    container_name: rpa-scheduler
+    restart: unless-stopped
+    shm_size: "1gb"
+    mem_limit: 1024m
+    env_file:
+      - path: ./config/.env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - RPA_HEADLESS=true
+      - MOCK_BASE_URL=${MOCK_BASE_URL:-http://mock-systems:8765}
+      - DEMO_MODE=${DEMO_MODE:-1}
+    volumes:
+      - ./config:/app/config
+      - ./storage:/app/storage
+    depends_on:
+      mock-systems:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/storage/state.db').execute('SELECT 1')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "main.py", "schedule"]
+
+volumes:
+  caddy_data:
+  caddy_config:

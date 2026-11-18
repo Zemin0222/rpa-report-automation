@@ -472,3 +472,14 @@ class StateDB:
             "cache_entries_total": int(cache_entries),
             "recent_events": [dict(r) for r in recent],
         }
+
+    def reset_demo_records(self, preserve_ai_cache: bool = True) -> None:
+        """Clear transactional run/telemetry tables for nightly public-demo reset."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM step_logs")
+            conn.execute("DELETE FROM job_runs")
+            conn.execute("DELETE FROM processed_files")
+            conn.execute("DELETE FROM ai_usage")
+            if not preserve_ai_cache:
+                conn.execute("DELETE FROM ai_cache")
+            conn.commit()

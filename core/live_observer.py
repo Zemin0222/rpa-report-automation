@@ -31,8 +31,14 @@ class LiveRunTracker:
         self._lock = threading.Lock()
         self._sessions: dict[str, LiveSession] = {}
         self._latest_id: str | None = None
+        self._latest_completed_id: str | None = None
 
-    def create_session(self, job_name: str, biz_date: str) -> str:
+    def create_session(
+        self,
+        job_name: str,
+        biz_date: str,
+        initial_status: str = "RUNNING",
+    ) -> str:
         sid = uuid.uuid4().hex[:12]
         sess_dir = self.frames_root / sid
         sess_dir.mkdir(parents=True, exist_ok=True)
@@ -42,10 +48,20 @@ class LiveRunTracker:
                 job_name=job_name,
                 biz_date=biz_date,
                 started_at=time.perf_counter(),
+                status=initial_status,
             )
-            self._latest_id = sid
+            if initial_status == "RUNNING":
+                self._latest_id = sid
             self._prune_old_sessions_locked()
         return sid
+
+    def mark_running(self, session_id: str) -> None:
+        with self._lock:
+            sess = self._sessions.get(session_id)
+            if sess is not None:
+                sess.status = "RUNNING"
+                sess.started_at = time.perf_counter()
+                self._latest_id = session_id
 
     def _prune_old_sessions_locked(self) -> None:
         if len(self._sessions) > self.max_sessions:
@@ -104,6 +120,24 @@ class LiveRunTracker:
             if sess is not None:
                 sess.status = status
                 sess.outcome = outcome
+                if status == "SUCCESS" or any(e.get("frame_url") for e in sess.events):
+                    self._latest_completed_id = session_id
+
+    def get_latest_completed_dict(self) -> dict[str, Any] | None:
+        with self._lock:
+            if self._latest_completed_id and self._latest_completed_id in self._sessions:
+                target_id = self._latest_completed_id
+            else:
+                target_id = next(
+                    (
+                        sid
+                        for sid in reversed(list(self._sessions.keys()))
+                        if self._sessions[sid].status != "QUEUED"
+                        and any(e.get("frame_url") for e in self._sessions[sid].events)
+                    ),
+                    None,
+                )
+        return self.get_session_dict(target_id) if target_id else None
 
     def get_session_dict(self, session_id: str | None = None) -> dict[str, Any] | None:
         with self._lock:
@@ -122,9 +156,13 @@ class LiveRunTracker:
                 "job_name": sess.job_name,
                 "biz_date": sess.biz_date,
                 "status": sess.status,
-                "elapsed_sec": round(time.perf_counter() - sess.started_at, 2)
-                if sess.status == "RUNNING"
-                else (sess.outcome or {}).get("duration_sec", round(time.perf_counter() - sess.started_at, 2)),
+                "elapsed_sec": 0.0
+                if sess.status == "QUEUED"
+                else (
+                    round(time.perf_counter() - sess.started_at, 2)
+                    if sess.status == "RUNNING"
+                    else (sess.outcome or {}).get("duration_sec", round(time.perf_counter() - sess.started_at, 2))
+                ),
                 "current_url": sess.current_url,
                 "current_frame_url": latest_frame,
                 "events": list(sess.events),

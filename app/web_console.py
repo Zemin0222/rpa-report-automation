@@ -1,27 +1,37 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import os
 import re
 import sys
-import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.demo_guard import (
+    AUTH_COOKIE_NAME,
+    auth_token_for,
+    enforce_demo_rate_limit,
+    get_demo_rate_limit,
+    is_admin_authenticated,
+    is_demo_mode,
+    require_admin_access,
+    require_view_access,
+    reset_demo_data,
+)
 from core.config_loader import load_config
 from core.doctor import run_doctor_checks
 from core.housekeeping import cleanup_storage, get_storage_usage_mb
+from core.job_queue import QueueFullError, SingleWorkerQueue
 from core.live_observer import LiveRunTracker
 from core.pipeline import run_backfill_pipeline, run_daily_pipeline
 from mock_systems.invoice_factory import populate_sample_invoices, render_invoice_thumbnail
@@ -37,6 +47,10 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 app = FastAPI(title="RPA 跨系统数据搬运与自动对账工作台")
 _LIVE_TRACKERS: dict[str, LiveRunTracker] = {}
+_JOB_QUEUE = SingleWorkerQueue(
+    max_queue_size=max(1, int(os.getenv("DEMO_MAX_QUEUE", "10"))),
+    default_estimate_sec=20.0,
+)
 
 
 def _get_live_tracker(frames_root: Path) -> LiveRunTracker:
@@ -86,17 +100,7 @@ class TestAlertRequest(BaseModel):
 
 
 def _auth_token_for(password: str) -> str:
-    return hashlib.sha256(f"rpa_console::{password}".encode("utf-8")).hexdigest()
-
-
-def _require_auth(request: Request) -> None:
-    required_pwd = os.getenv("DASHBOARD_PASSWORD", "").strip()
-    if not required_pwd:
-        return
-    cookie_val = request.cookies.get("rpa_console_auth", "")
-    expected = _auth_token_for(required_pwd)
-    if not hmac.compare_digest(cookie_val, expected):
-        raise HTTPException(status_code=401, detail="Unauthorized: please sign in")
+    return auth_token_for(password)
 
 
 def _safe_child_path(base_dir: Path, filename: str) -> Path:
@@ -124,34 +128,60 @@ def health() -> dict[str, str]:
 
 @app.get("/api/auth-status")
 def auth_status(request: Request) -> dict[str, Any]:
+    demo = is_demo_mode()
+    admin = is_admin_authenticated(request)
     required_pwd = os.getenv("DASHBOARD_PASSWORD", "").strip()
+    limit_max, limit_win = get_demo_rate_limit()
+    if demo:
+        return {
+            "auth_required": False,
+            "authenticated": True,
+            "demo_mode": True,
+            "is_admin": admin,
+            "rate_limit": {"max": limit_max, "window_sec": limit_win},
+        }
     if not required_pwd:
-        return {"auth_required": False, "authenticated": True}
-    cookie_val = request.cookies.get("rpa_console_auth", "")
-    authed = hmac.compare_digest(cookie_val, _auth_token_for(required_pwd))
-    return {"auth_required": True, "authenticated": authed}
+        return {
+            "auth_required": False,
+            "authenticated": True,
+            "demo_mode": False,
+            "is_admin": True,
+            "rate_limit": None,
+        }
+    return {
+        "auth_required": True,
+        "authenticated": admin,
+        "demo_mode": False,
+        "is_admin": admin,
+        "rate_limit": None,
+    }
 
 
 @app.post("/api/login")
 def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
     required_pwd = os.getenv("DASHBOARD_PASSWORD", "").strip()
     if not required_pwd:
-        return {"authenticated": True}
+        if is_demo_mode():
+            raise HTTPException(
+                status_code=403,
+                detail="演示环境尚未配置 DASHBOARD_PASSWORD，暂不允许前端解锁管理员权限",
+            )
+        return {"authenticated": True, "is_admin": True}
     if not hmac.compare_digest(payload.password, required_pwd):
         raise HTTPException(status_code=401, detail="访问口令错误，请检查 DASHBOARD_PASSWORD 配置")
     response.set_cookie(
-        key="rpa_console_auth",
-        value=_auth_token_for(required_pwd),
+        key=AUTH_COOKIE_NAME,
+        value=auth_token_for(required_pwd),
         httponly=True,
         samesite="lax",
         max_age=7 * 86400,
     )
-    return {"authenticated": True}
+    return {"authenticated": True, "is_admin": True}
 
 
 @app.post("/api/logout")
 def logout(response: Response) -> dict[str, bool]:
-    response.delete_cookie("rpa_console_auth")
+    response.delete_cookie(AUTH_COOKIE_NAME)
     return {"ok": True}
 
 
@@ -168,7 +198,7 @@ def get_state(
     job_name: str | None = None,
     biz_date: str | None = None,
 ) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     db = StateDB(cfg.storage.db_path)
 
@@ -341,6 +371,10 @@ def get_state(
         "doctor": run_doctor_checks(cfg),
         "storage_usage": get_storage_usage_mb(cfg.storage),
         "ai_stats": db.get_ai_daily_stats(),
+        "demo_mode": is_demo_mode(),
+        "is_admin": is_admin_authenticated(request),
+        "rate_limit": dict(zip(("max", "window_sec"), get_demo_rate_limit())) if is_demo_mode() else None,
+        "queue_status": _JOB_QUEUE.get_status(),
         "config_summary": {
             "headless": cfg.browser.headless,
             "timezone": cfg.timezone,
@@ -370,24 +404,52 @@ def get_state(
 
 @app.get("/api/runs/{run_id}/steps")
 def get_run_steps(run_id: int, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     db = StateDB(cfg.storage.db_path)
     return {"run_id": run_id, "steps": db.list_steps_for_run(run_id)}
 
 
+@app.get("/api/queue/status")
+def queue_status(request: Request, ticket_id: str | None = None) -> dict[str, Any]:
+    require_view_access(request)
+    return _JOB_QUEUE.get_status(ticket_id)
+
+
 @app.post("/api/run")
 def trigger_run(payload: RunRequest, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
+    enforce_demo_rate_limit(request, bucket="demo_run")
     cfg = load_config()
-    outcome = run_daily_pipeline(
-        biz_date=payload.biz_date,
-        force=payload.force,
-        dry_run=payload.dry_run,
-        cfg=cfg,
-        simulate_failure=payload.simulate_failure,
-        job_name=payload.job_name,
-    )
+    eff_dry_run = True if (is_demo_mode() and not is_admin_authenticated(request)) else payload.dry_run
+    target_date = payload.biz_date or date.today().isoformat()
+    job_name = payload.job_name or cfg.job_name
+
+    def _run_batch():
+        return run_daily_pipeline(
+            biz_date=payload.biz_date,
+            force=payload.force,
+            dry_run=eff_dry_run,
+            cfg=cfg,
+            simulate_failure=payload.simulate_failure,
+            job_name=payload.job_name,
+        )
+
+    try:
+        ticket, _, _, _ = _JOB_QUEUE.enqueue(
+            _run_batch,
+            kind="batch",
+            job_name=job_name,
+            biz_date=target_date,
+        )
+    except QueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    if not ticket.done_event.wait(timeout=180.0):
+        raise HTTPException(status_code=504, detail="排队执行超时，请在运行记录页查看结果")
+    if ticket.error:
+        raise HTTPException(status_code=500, detail=ticket.error)
+    outcome = ticket.result
     return {
         "run_id": outcome.run_id,
         "biz_date": outcome.biz_date,
@@ -404,47 +466,69 @@ def trigger_run(payload: RunRequest, request: Request) -> dict[str, Any]:
 
 @app.post("/api/run-visual")
 def trigger_visual_run(payload: VisualRunRequest, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
+    enforce_demo_rate_limit(request, bucket="demo_run")
     cfg = load_config()
     assert cfg.storage.live_frames is not None
     tracker = _get_live_tracker(cfg.storage.live_frames)
     target_date = payload.biz_date or date.today().isoformat()
     job_name = payload.job_name or cfg.job_name
-    session_id = tracker.create_session(job_name, target_date)
+    eff_dry_run = True if (is_demo_mode() and not is_admin_authenticated(request)) else payload.dry_run
+    session_id = tracker.create_session(job_name, target_date, initial_status="QUEUED")
 
-    thread = threading.Thread(
-        target=run_daily_pipeline,
-        kwargs={
-            "biz_date": target_date,
-            "force": payload.force,
-            "dry_run": payload.dry_run,
-            "cfg": cfg,
-            "simulate_failure": payload.simulate_failure,
-            "job_name": job_name,
-            "observer": tracker,
-            "session_id": session_id,
-            "visual_delay_ms": max(0, min(1500, payload.visual_delay_ms)),
-            "fresh_login": payload.fresh_login,
-        },
-        daemon=True,
-    )
-    thread.start()
-    return {"session_id": session_id, "status": "RUNNING"}
+    def _run_visual() -> dict[str, Any]:
+        tracker.mark_running(session_id)
+        out = run_daily_pipeline(
+            biz_date=target_date,
+            force=payload.force,
+            dry_run=eff_dry_run,
+            cfg=cfg,
+            simulate_failure=payload.simulate_failure,
+            job_name=job_name,
+            observer=tracker,
+            session_id=session_id,
+            visual_delay_ms=max(0, min(1500, payload.visual_delay_ms)),
+            fresh_login=payload.fresh_login,
+        )
+        return {"run_id": out.run_id, "status": out.status}
+
+    try:
+        ticket, position, ahead_count, wait_sec = _JOB_QUEUE.enqueue(
+            _run_visual,
+            kind="visual",
+            job_name=job_name,
+            biz_date=target_date,
+            session_id=session_id,
+        )
+    except QueueFullError as exc:
+        tracker.finish_session(session_id, "LOCKED")
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    fallback_sess = tracker.get_latest_completed_dict() if ahead_count > 0 else None
+    return {
+        "session_id": session_id,
+        "ticket_id": ticket.ticket_id,
+        "status": "RUNNING" if ahead_count == 0 else "QUEUED",
+        "queue_position": position,
+        "ahead_count": ahead_count,
+        "estimated_wait_sec": wait_sec,
+        "fallback_session": fallback_sess,
+    }
 
 
 @app.get("/api/live/latest")
-def get_latest_live_session(request: Request) -> dict[str, Any]:
-    _require_auth(request)
+def get_latest_live_session(request: Request, completed_only: bool = False) -> dict[str, Any]:
+    require_view_access(request)
     cfg = load_config()
     assert cfg.storage.live_frames is not None
     tracker = _get_live_tracker(cfg.storage.live_frames)
-    sess = tracker.get_session_dict(None)
+    sess = tracker.get_latest_completed_dict() if completed_only else tracker.get_session_dict(None)
     return {"session": sess}
 
 
 @app.get("/api/live/{session_id}")
 def get_live_session(session_id: str, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     assert cfg.storage.live_frames is not None
     tracker = _get_live_tracker(cfg.storage.live_frames)
@@ -456,7 +540,7 @@ def get_live_session(session_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/live/frame/{session_id}/{filename}")
 def get_live_frame(session_id: str, filename: str, request: Request) -> FileResponse:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     assert cfg.storage.live_frames is not None
     sess_dir = _safe_child_path(cfg.storage.live_frames, session_id)
@@ -468,7 +552,7 @@ def get_live_frame(session_id: str, filename: str, request: Request) -> FileResp
 
 @app.post("/api/backfill")
 def trigger_backfill(payload: BackfillRequest, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     days = max(1, min(30, payload.days))
     outcomes = run_backfill_pipeline(
@@ -489,7 +573,7 @@ def trigger_backfill(payload: BackfillRequest, request: Request) -> dict[str, An
 
 @app.post("/api/ops/cleanup")
 def ops_cleanup(payload: CleanupRequest, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     summary = cleanup_storage(cfg.storage, cfg.retention, dry_run=payload.dry_run)
     return {"dry_run": payload.dry_run, **summary}
@@ -497,7 +581,7 @@ def ops_cleanup(payload: CleanupRequest, request: Request) -> dict[str, Any]:
 
 @app.post("/api/ops/backup")
 def ops_backup(request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     db = StateDB(cfg.storage.db_path)
     assert cfg.storage.backups is not None
@@ -505,9 +589,16 @@ def ops_backup(request: Request) -> dict[str, Any]:
     return {"filename": bkp_path.name, "size_kb": round(bkp_path.stat().st_size / 1024, 1)}
 
 
+@app.post("/api/ops/demo-reset")
+def ops_demo_reset(request: Request, seed_days: int = 7) -> dict[str, Any]:
+    require_admin_access(request)
+    cfg = load_config()
+    return reset_demo_data(cfg, seed_days=max(1, min(14, seed_days)), seed_jobs=True)
+
+
 @app.post("/api/ops/test-alert")
 def ops_test_alert(payload: TestAlertRequest, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     target_date = payload.biz_date or date.today().isoformat()
     job_name = payload.job_name or cfg.job_name
@@ -547,7 +638,7 @@ def _save_validated_upload(
 
 @app.post("/api/dropzone/upload")
 def upload_dropzone_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     clean_name, _, content = _save_validated_upload(file, cfg.storage.dropzone, ALLOWED_DROPZONE_EXTS)
     return {"filename": clean_name, "size_kb": round(len(content) / 1024, 1)}
@@ -555,7 +646,7 @@ def upload_dropzone_file(request: Request, file: UploadFile = File(...)) -> dict
 
 @app.delete("/api/dropzone/{filename}")
 def delete_dropzone_file(filename: str, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     target = _safe_child_path(cfg.storage.dropzone, filename)
     if not target.exists():
@@ -566,7 +657,7 @@ def delete_dropzone_file(filename: str, request: Request) -> dict[str, Any]:
 
 @app.post("/api/expense/upload")
 def upload_invoice_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     inv_dir = cfg.storage.invoices
     assert inv_dir is not None
@@ -587,7 +678,8 @@ def upload_invoice_file(request: Request, file: UploadFile = File(...)) -> dict[
 
 @app.post("/api/expense/samples")
 def generate_expense_samples(request: Request, biz_date: str | None = None) -> dict[str, Any]:
-    _require_auth(request)
+    require_view_access(request)
+    enforce_demo_rate_limit(request, bucket="demo_samples", limit=6, window_sec=600)
     cfg = load_config()
     inv_dir = cfg.storage.invoices
     assert inv_dir is not None
@@ -610,7 +702,7 @@ def generate_expense_samples(request: Request, biz_date: str | None = None) -> d
 
 @app.delete("/api/expense/files/{filename}")
 def delete_invoice_file(filename: str, request: Request) -> dict[str, Any]:
-    _require_auth(request)
+    require_admin_access(request)
     cfg = load_config()
     inv_dir = cfg.storage.invoices
     assert inv_dir is not None
@@ -625,7 +717,7 @@ def delete_invoice_file(filename: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/expense/thumb/{filename}")
 def get_invoice_thumbnail(filename: str, request: Request) -> FileResponse:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     inv_dir = cfg.storage.invoices
     assert inv_dir is not None
@@ -644,7 +736,7 @@ def download_artifact(
     biz_date: str,
     request: Request,
 ) -> FileResponse:
-    _require_auth(request)
+    require_view_access(request)
     clean_date = _validate_date(biz_date)
     cfg = load_config()
     file_map = {
@@ -673,7 +765,7 @@ def download_artifact(
 
 @app.get("/api/screenshots/{filename}")
 def get_screenshot(filename: str, request: Request) -> FileResponse:
-    _require_auth(request)
+    require_view_access(request)
     cfg = load_config()
     target = _safe_child_path(cfg.storage.screenshots, filename)
     if not target.exists() or target.suffix.lower() != ".png":

@@ -884,6 +884,26 @@
       font-variant-numeric: tabular-nums;
       margin-top: 2px;
     }
+    .queue-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: #F9F8F5;
+      border: 1px solid #C7DAFA;
+      border-left: 3.5px solid var(--accent);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .queue-banner-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 500;
+    }
 
     /* Lightbox & Auth Dialog */
     dialog {
@@ -1166,6 +1186,8 @@
           <div class="date-pills" id="date-pills" aria-label="切换查看已生成的日期"></div>
         </div>
         <div class="topbar-right">
+          <span id="demo-mode-pill" class="badge badge-info" style="display:none;">访客演示模式</span>
+          <button id="btn-admin-toggle" class="btn btn-secondary btn-sm" style="display:none;" type="button">管理员解锁</button>
           <div class="status-chip" id="status-chip">
             <span class="dot" id="status-dot"></span>
             <span id="status-text">就绪</span>
@@ -1438,6 +1460,14 @@ python main.py doctor</pre>
             </div>
           </div>
 
+          <div class="queue-banner" id="live-queue-banner" role="status" aria-live="polite">
+            <div class="queue-banner-left">
+              <span class="dot busy"></span>
+              <span id="live-queue-text">前方排队中，正在加载最近一次成功录像回放...</span>
+            </div>
+            <span class="mono" id="live-queue-eta" style="font-size:12px;color:var(--accent);font-weight:600;"></span>
+          </div>
+
           <div class="live-layout">
             <div class="browser-frame">
               <div class="browser-chrome">
@@ -1490,7 +1520,8 @@ python main.py doctor</pre>
   <!-- Auth Gate Modal -->
   <dialog id="auth-dialog">
     <div class="dlg-head">
-      <span>RPA 控制台访问验证</span>
+      <span id="dlg-auth-title">RPA 控制台访问验证</span>
+      <button id="dlg-auth-close" class="btn btn-secondary btn-sm" type="button" style="display:none;">取消</button>
     </div>
     <div class="dlg-body" style="width:360px;">
       <form id="auth-form" style="display:flex;flex-direction:column;gap:12px;">
@@ -1520,6 +1551,7 @@ python main.py doctor</pre>
       selectedInvoiceIdx: 0,
       expandedChannels: {},
       expandedReconcile: {},
+      authMeta: null,
       busy: false,
       timerHandle: null,
       liveSession: null,
@@ -1772,7 +1804,7 @@ python main.py doctor</pre>
     async function api(url, opts = {}) {
       const res = await fetch(url, opts);
       if (res.status === 401) {
-        openAuthDialog();
+        openAuthDialog(false);
         throw new Error("未登录或口令已失效");
       }
       if (!res.ok) {
@@ -1781,9 +1813,50 @@ python main.py doctor</pre>
           const j = await res.json();
           detail = j.detail || detail;
         } catch {}
+        if (res.status === 403) {
+          throw new Error(detail || "需管理员口令解锁后才能执行该操作");
+        }
+        if (res.status === 429) {
+          throw new Error(detail || "演示请求过于频繁或队列已满，请稍后再试");
+        }
         throw new Error(detail);
       }
       return res.json();
+    }
+
+    function applyDemoModeUI(meta) {
+      if (!meta) return;
+      state.authMeta = meta;
+      const pill = document.getElementById("demo-mode-pill");
+      const adminBtn = document.getElementById("btn-admin-toggle");
+      const dryChk = document.getElementById("chk-dry-run");
+      if (meta.demo_mode) {
+        const winMin = Math.max(1, Math.round((meta.rate_limit?.window_sec || 600) / 60));
+        const maxReq = meta.rate_limit?.max || 2;
+        if (pill) {
+          pill.style.display = "inline-flex";
+          pill.className = "badge " + (meta.is_admin ? "badge-ok" : "badge-warn");
+          pill.textContent = meta.is_admin
+            ? "管理员模式 · 全权限"
+            : `访客演示 · 限流 ${maxReq}次/${winMin}分`;
+        }
+        if (adminBtn) {
+          adminBtn.style.display = "inline-flex";
+          adminBtn.textContent = meta.is_admin ? "锁定管理" : "管理员解锁";
+        }
+        if (dryChk && !meta.is_admin) {
+          dryChk.checked = true;
+          dryChk.disabled = true;
+          dryChk.title = "演示模式下强制仅本地预览，不对外发送群消息";
+        } else if (dryChk) {
+          dryChk.disabled = false;
+          dryChk.title = "";
+        }
+      } else {
+        if (pill) pill.style.display = "none";
+        if (adminBtn) adminBtn.style.display = "none";
+        if (dryChk) dryChk.disabled = false;
+      }
     }
 
     function setBusy(isBusy, label = "执行中...") {
@@ -1836,6 +1909,13 @@ python main.py doctor</pre>
       if (bizDate) qs.set("biz_date", bizDate);
       const data = await api("/api/state?" + qs.toString());
       state.data = data;
+      if (typeof data.demo_mode === "boolean") {
+        applyDemoModeUI({
+          demo_mode: data.demo_mode,
+          is_admin: Boolean(data.is_admin),
+          rate_limit: data.rate_limit || state.authMeta?.rate_limit,
+        });
+      }
       state.selectedJob = data.selected_job;
       state.selectedDate = data.selected_date;
       if (!state.selectedRunId && data.runs.length > 0) {
@@ -2687,8 +2767,15 @@ python main.py doctor</pre>
       }
     }
 
-    function openAuthDialog() {
+    function openAuthDialog(dismissible = false) {
       const dlg = document.getElementById("auth-dialog");
+      const closeBtn = document.getElementById("dlg-auth-close");
+      const titleEl = document.getElementById("dlg-auth-title");
+      const allowClose = dismissible || Boolean(state.authMeta?.demo_mode);
+      if (closeBtn) closeBtn.style.display = allowClose ? "inline-flex" : "none";
+      if (titleEl) {
+        titleEl.textContent = state.authMeta?.demo_mode ? "输入管理员口令解锁全量运维操作" : "RPA 控制台访问验证";
+      }
       if (!dlg.open) dlg.showModal();
     }
 
@@ -2936,27 +3023,51 @@ python main.py doctor</pre>
     });
 
     document.getElementById("btn-clean-dry").addEventListener("click", async () => {
-      const res = await api("/api/ops/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dry_run: true }),
-      });
-      toast(`预检：将清理 ${res.total_files_removed} 个过期文件（${(res.total_bytes_reclaimed / 1024).toFixed(1)} KB）`);
+      try {
+        const res = await api("/api/ops/cleanup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: true }),
+        });
+        toast(`预检：将清理 ${res.total_files_removed} 个过期文件（${(res.total_bytes_reclaimed / 1024).toFixed(1)} KB）`);
+      } catch (err) {
+        toast(err.message, "warn");
+      }
     });
 
     document.getElementById("btn-clean-exec").addEventListener("click", async () => {
-      const res = await api("/api/ops/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dry_run: false }),
-      });
-      toast(`清理完成：删除 ${res.total_files_removed} 个文件`, "ok");
-      await loadState();
+      try {
+        const res = await api("/api/ops/cleanup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: false }),
+        });
+        toast(`清理完成：删除 ${res.total_files_removed} 个文件`, "ok");
+        await loadState();
+      } catch (err) {
+        toast("清理失败：" + err.message, "warn");
+      }
     });
 
     document.getElementById("btn-run-doctor").addEventListener("click", async () => {
       await loadState();
       toast("自检已完成", "ok");
+    });
+
+    document.getElementById("dlg-auth-close")?.addEventListener("click", () => {
+      document.getElementById("auth-dialog").close();
+    });
+
+    document.getElementById("btn-admin-toggle")?.addEventListener("click", async () => {
+      if (state.authMeta?.is_admin) {
+        await api("/api/logout", { method: "POST" });
+        const freshAuth = await api("/api/auth-status");
+        applyDemoModeUI(freshAuth);
+        toast("已退出管理员权限，恢复访客演示模式", "ok");
+        await loadState(state.selectedJob, state.selectedDate);
+      } else {
+        openAuthDialog(true);
+      }
     });
 
     // Auth form
@@ -2972,7 +3083,11 @@ python main.py doctor</pre>
           body: JSON.stringify({ password: pwd }),
         });
         document.getElementById("auth-dialog").close();
+        document.getElementById("auth-pwd").value = "";
+        const freshAuth = await api("/api/auth-status");
+        applyDemoModeUI(freshAuth);
         await loadState();
+        toast("管理员身份验证成功", "ok");
       } catch (err) {
         errBox.textContent = err.message;
         errBox.style.display = "block";
@@ -2994,8 +3109,8 @@ python main.py doctor</pre>
       if (!sess) return;
 
       const st = sess.status || "RUNNING";
-      const stLabels = { RUNNING: "机器人操作中", SUCCESS: "全部流程完成", FAILED: "执行出错", SKIPPED: "已跳过", LOCKED: "已被占用" };
-      badge.className = "badge " + (st === "RUNNING" ? "badge-info" : (st === "SUCCESS" ? "badge-ok" : "badge-err"));
+      const stLabels = { QUEUED: "排队等待工位", RUNNING: "机器人操作中", SUCCESS: "全部流程完成", FAILED: "执行出错", SKIPPED: "已跳过", LOCKED: "已被占用" };
+      badge.className = "badge " + (st === "RUNNING" ? "badge-info" : (st === "QUEUED" ? "badge-warn" : (st === "SUCCESS" ? "badge-ok" : "badge-err")));
       badge.textContent = stLabels[st] || st;
       elapsedEl.textContent = `${Number(sess.elapsed_sec || 0).toFixed(1)}s`;
       if (sess.outcome && sess.outcome.oa_ticket_id) {
@@ -3058,9 +3173,49 @@ python main.py doctor</pre>
       }
     }
 
+    function setQueueBanner(visible, ahead = 0, waitSec = 0, hasFallback = false) {
+      const banner = document.getElementById("live-queue-banner");
+      const textEl = document.getElementById("live-queue-text");
+      const etaEl = document.getElementById("live-queue-eta");
+      if (!banner) return;
+      if (!visible) {
+        banner.style.display = "none";
+        return;
+      }
+      banner.style.display = "flex";
+      const suffix = hasFallback
+        ? "已为您先自动播放最近一次成功的操作录像，轮到您后将无缝切入实时画面。"
+        : "正在排队等待共享演示工位空闲，轮到您后将立即启动实时画面。";
+      if (textEl) textEl.textContent = `当前前方排队 ${ahead} 个任务 · ${suffix}`;
+      if (etaEl) etaEl.textContent = waitSec > 0 ? `预计等待约 ${waitSec}s` : "即将开始";
+    }
+
+    function startReplayLoop(sess = state.liveSession, loop = true) {
+      if (!sess) return;
+      clearInterval(state.replayHandle);
+      const framed = (sess.events || []).map((e, i) => (e.frame_url ? i : -1)).filter(i => i >= 0);
+      if (framed.length === 0) return;
+      let pos = 0;
+      state.liveSelectedIdx = framed[0];
+      renderLiveSession(sess, false);
+      state.replayHandle = setInterval(() => {
+        pos += 1;
+        if (pos >= framed.length) {
+          if (!loop) {
+            clearInterval(state.replayHandle);
+            return;
+          }
+          pos = 0;
+        }
+        state.liveSelectedIdx = framed[pos];
+        renderLiveSession(state.liveSession, false);
+      }, 650);
+    }
+
     async function startVisualDemo() {
       clearInterval(state.livePollHandle);
       clearInterval(state.replayHandle);
+      setQueueBanner(false);
       const bizDate = document.getElementById("run-date-input").value || state.data?.today;
       const dryRun = document.getElementById("chk-dry-run").checked;
       const freshLogin = document.getElementById("chk-fresh-login").checked;
@@ -3083,12 +3238,43 @@ python main.py doctor</pre>
           }),
         });
         const sid = created.session_id;
+        const ticketId = created.ticket_id;
+        let showingFallback = false;
+
+        if (created.status === "QUEUED" && created.ahead_count > 0) {
+          showingFallback = Boolean(created.fallback_session);
+          setQueueBanner(true, created.ahead_count, created.estimated_wait_sec, showingFallback);
+          if (created.fallback_session) {
+            startReplayLoop(created.fallback_session);
+          }
+        }
+
         let finishing = false;
         state.livePollHandle = setInterval(async () => {
           if (finishing) return;
           try {
             const res = await api(`/api/live/${encodeURIComponent(sid)}`);
             const sess = res.session;
+            if (sess.status === "QUEUED") {
+              if (ticketId) {
+                try {
+                  const qs = await api(`/api/queue/status?ticket_id=${encodeURIComponent(ticketId)}`);
+                  const t = qs.ticket || {};
+                  setQueueBanner(true, Math.max(1, Number(t.ahead_count || 1)), Number(t.estimated_wait_sec || 0), showingFallback);
+                } catch {}
+              }
+              if (!showingFallback) {
+                renderLiveSession(sess, false);
+              }
+              return;
+            }
+
+            if (showingFallback) {
+              clearInterval(state.replayHandle);
+              showingFallback = false;
+              state.liveSelectedIdx = -1;
+            }
+            setQueueBanner(false);
             renderLiveSession(sess, true);
             if (sess.status !== "RUNNING") {
               finishing = true;
@@ -3108,10 +3294,11 @@ python main.py doctor</pre>
               }
             }
           } catch {}
-        }, 300);
+        }, 320);
       } catch (err) {
         setBusy(false);
-        toast("启动直播演示失败：" + err.message, "err");
+        setQueueBanner(false);
+        toast("启动直播演示失败：" + err.message, "warn");
       }
     }
 
@@ -3148,29 +3335,15 @@ python main.py doctor</pre>
     document.getElementById("btn-replay-prev").addEventListener("click", () => stepFrame(-1));
     document.getElementById("btn-replay-next").addEventListener("click", () => stepFrame(1));
     document.getElementById("btn-replay-play").addEventListener("click", () => {
-      if (!state.liveSession) return;
-      clearInterval(state.replayHandle);
-      const framed = (state.liveSession.events || []).map((e, i) => (e.frame_url ? i : -1)).filter(i => i >= 0);
-      if (framed.length === 0) return;
-      let pos = 0;
-      state.liveSelectedIdx = framed[0];
-      renderLiveSession(state.liveSession, false);
-      state.replayHandle = setInterval(() => {
-        pos += 1;
-        if (pos >= framed.length) {
-          clearInterval(state.replayHandle);
-          return;
-        }
-        state.liveSelectedIdx = framed[pos];
-        renderLiveSession(state.liveSession, false);
-      }, 650);
+      startReplayLoop(state.liveSession, false);
     });
 
     (async function boot() {
       try {
         const auth = await api("/api/auth-status");
+        applyDemoModeUI(auth);
         if (auth.auth_required && !auth.authenticated) {
-          openAuthDialog();
+          openAuthDialog(false);
           return;
         }
         await loadState();
