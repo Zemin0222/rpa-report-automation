@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ai.gateway import AiGateway
 from connectors.mock_expense_submitter import MockExpenseSubmitter
 from core.config_loader import AppConfig, JobDefinition
 from mock_systems.invoice_factory import populate_sample_invoices
@@ -98,8 +99,9 @@ class ExpenseReimburseWorkflow:
                 overwrite=False,
             )
 
+        gateway = AiGateway(ctx.cfg.llm, db=ctx.db)
         records: list[InvoiceRecord] = [
-            extract_invoice_from_file(p, llm_cfg=ctx.cfg.llm, thumb_dir=thumb_dir)
+            extract_invoice_from_file(p, llm_cfg=ctx.cfg.llm, thumb_dir=thumb_dir, gateway=gateway)
             for p in candidate_files
         ]
 

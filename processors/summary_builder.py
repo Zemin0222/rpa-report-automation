@@ -47,36 +47,29 @@ def build_rule_summary(etl: EtlResult) -> str:
     return "\n".join(lines)
 
 
-def build_summary(etl: EtlResult, llm_cfg: LlmConfig) -> str:
-    """Optionally enrich the rule summary via OpenAI-compatible LLM with safe fallback."""
+def build_summary(
+    etl: EtlResult,
+    llm_cfg: LlmConfig,
+    gateway: object | None = None,
+) -> str:
+    """Optionally enrich the rule summary via AiGateway with cache, budget guard, and safe fallback."""
     base_summary = build_rule_summary(etl)
-    if not llm_cfg.enabled:
+    from ai.gateway import AiGateway
+
+    gw = gateway if isinstance(gateway, AiGateway) else AiGateway(llm_cfg)
+    if not llm_cfg.enabled and gw.injected_client is None:
         return base_summary
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        logger.info("LLM summary enabled in config, but OPENAI_API_KEY is unset; using rule summary.")
-        return base_summary
+    res = gw.generate_daily_advice(base_summary)
+    advice = res.data
+    bullets: list[str] = []
+    if advice.highlights:
+        bullets.append("核心亮点：" + "；".join(advice.highlights))
+    if advice.suggestions:
+        for idx, item in enumerate(advice.suggestions, start=1):
+            bullets.append(f"{idx}. {item}")
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    model = os.getenv("OPENAI_MODEL", "").strip() or llm_cfg.model
-
-    try:
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=20.0)
-        prompt = (
-            "你是资深运营数据分析师。请基于以下日报事实数据，用简洁专业的中文补充 2 条可执行的运营优化建议"
-            "（严禁编造未出现的数字，总字数控制在 180 字以内）：\n\n"
-            f"{base_summary}"
-        )
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        ai_note = (resp.choices[0].message.content or "").strip()
-        if ai_note:
-            return f"{base_summary}\n\n【AI 运营建议】\n{ai_note}"
-    except Exception as exc:
-        logger.warning("LLM summary call failed, falling back to rule summary: %s", exc)
-
+    if bullets:
+        tag = "AI 缓存" if res.source == "cache" else "AI 运营建议"
+        return f"{base_summary}\n\n【{tag}】\n" + "\n".join(bullets)
     return base_summary

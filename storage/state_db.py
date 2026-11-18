@@ -65,6 +65,30 @@ class StateDB:
                     biz_date TEXT NOT NULL,
                     processed_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS ai_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    task TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    tokens_used INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ai_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    usage_date TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_tokens INTEGER DEFAULT 0,
+                    completion_tokens INTEGER DEFAULT 0,
+                    total_tokens INTEGER DEFAULT 0,
+                    latency_ms REAL DEFAULT 0.0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_usage_date
+                    ON ai_usage (usage_date, source);
                 """
             )
             cols = {
@@ -348,3 +372,103 @@ class StateDB:
                 }
             )
         return trend
+
+    def get_ai_cache(self, cache_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cache_key, task, model, response_json, tokens_used, created_at FROM ai_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def put_ai_cache(
+        self,
+        cache_key: str,
+        task: str,
+        model: str,
+        response_json: str,
+        tokens_used: int = 0,
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO ai_cache (cache_key, task, model, response_json, tokens_used, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (cache_key, task, model, response_json, int(tokens_used), now),
+            )
+
+    def record_ai_usage(
+        self,
+        usage_date: str,
+        task: str,
+        source: str,
+        model: str,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        latency_ms: float = 0.0,
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ai_usage (
+                    usage_date, task, source, model,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    latency_ms, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    usage_date,
+                    task,
+                    source,
+                    model,
+                    int(prompt_tokens),
+                    int(completion_tokens),
+                    int(total_tokens),
+                    round(latency_ms, 1),
+                    now,
+                ),
+            )
+
+    def get_ai_daily_stats(self, usage_date: str | None = None) -> dict[str, Any]:
+        target_date = usage_date or datetime.now().date().isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source, COUNT(*) AS cnt, COALESCE(SUM(total_tokens), 0) AS tok
+                FROM ai_usage
+                WHERE usage_date = ?
+                GROUP BY source
+                """,
+                (target_date,),
+            ).fetchall()
+            recent = conn.execute(
+                """
+                SELECT task, source, model, total_tokens, latency_ms, created_at
+                FROM ai_usage
+                ORDER BY id DESC LIMIT 6
+                """
+            ).fetchall()
+            cache_entries = conn.execute("SELECT COUNT(*) FROM ai_cache").fetchone()[0]
+
+        by_src = {r["source"]: {"cnt": int(r["cnt"]), "tok": int(r["tok"])} for r in rows}
+        ai_calls = by_src.get("ai", {}).get("cnt", 0)
+        tokens_today = by_src.get("ai", {}).get("tok", 0)
+        cache_hits = by_src.get("cache", {}).get("cnt", 0)
+        rule_fallbacks = by_src.get("rule", {}).get("cnt", 0)
+        llm_denom = ai_calls + cache_hits
+        hit_rate = round((cache_hits / llm_denom) * 100, 1) if llm_denom > 0 else 0.0
+        return {
+            "usage_date": target_date,
+            "calls_today": ai_calls,
+            "tokens_today": tokens_today,
+            "cache_hits_today": cache_hits,
+            "rule_fallbacks_today": rule_fallbacks,
+            "cache_hit_rate_pct": hit_rate,
+            "cache_entries_total": int(cache_entries),
+            "recent_events": [dict(r) for r in recent],
+        }

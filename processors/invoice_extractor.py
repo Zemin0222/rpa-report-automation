@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import base64
 import hashlib
-import json
-import os
 import re
 import unicodedata
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pdfplumber
 from pydantic import BaseModel
 
+from ai.schemas import InvoiceExtractionSchema
 from core.config_loader import LlmConfig
 from core.logger import get_logger
 from mock_systems.invoice_factory import render_invoice_thumbnail
+
+if TYPE_CHECKING:
+    from ai.gateway import AiGateway
 
 logger = get_logger("rpa.invoice_extractor")
 
@@ -36,7 +37,7 @@ class InvoiceRecord(BaseModel):
     amount_excl_tax: float = 0.0
     tax_amount: float = 0.0
     total_amount: float = 0.0
-    extract_source: Literal["ai", "rule"] = "rule"
+    extract_source: Literal["ai", "cache", "rule"] = "rule"
     confidence: float = 0.0
     thumbnail_url: str = ""
 
@@ -141,70 +142,68 @@ def _try_llm_extract_invoice(
     image_bytes: bytes | None,
     llm_cfg: LlmConfig | None,
     base_record: InvoiceRecord,
+    gateway: AiGateway | None = None,
 ) -> InvoiceRecord:
-    """Optionally enhance/extract invoice JSON using OpenAI-compatible Vision/Text API."""
-    if llm_cfg is None or not llm_cfg.enabled:
-        return base_record
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
+    """Optionally enhance invoice extraction via AiGateway (cache + budget guard + rule fallback)."""
+    from ai.gateway import AiGateway
+
+    effective_cfg = llm_cfg or LlmConfig(enabled=False)
+    gw = gateway or AiGateway(effective_cfg)
+    if not effective_cfg.enabled and gw.injected_client is None:
         return base_record
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    model = os.getenv("OPENAI_MODEL", "").strip() or llm_cfg.model
-    prompt = (
-        "你是企业财务发票审核助手，请从下面发票文本或图片中抽取以下 JSON 字段："
-        "invoice_code, invoice_number, issue_date(YYYY-MM-DD), buyer_name, buyer_tax_id, "
-        "seller_name, item_name, category(交通/住宿/餐饮/办公/通信), "
-        "amount_excl_tax(float), tax_amount(float), total_amount(float)。仅返回合法 JSON。"
+    fallback_cat: Literal["交通", "住宿", "餐饮", "办公", "通信"] = (
+        base_record.category
+        if base_record.category in {"交通", "住宿", "餐饮", "办公", "通信"}
+        else "办公"
+    )  # type: ignore[assignment]
+    fallback_schema = InvoiceExtractionSchema(
+        invoice_code=base_record.invoice_code,
+        invoice_number=base_record.invoice_number,
+        issue_date=base_record.issue_date,
+        buyer_name=base_record.buyer_name,
+        buyer_tax_id=base_record.buyer_tax_id,
+        seller_name=base_record.seller_name,
+        item_name=base_record.item_name,
+        category=fallback_cat,
+        amount_excl_tax=base_record.amount_excl_tax,
+        tax_amount=base_record.tax_amount,
+        total_amount=base_record.total_amount,
     )
-    content: list[dict[str, object]] = [{"type": "text", "text": f"{prompt}\n\n文本内容:\n{raw_text[:2500]}"}]
-    if image_bytes:
-        b64 = base64.b64encode(image_bytes).decode("ascii")
-        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
 
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=20.0)
-        resp = client.chat.completions.create(
-            model=model,
-            temperature=0.1,
-            messages=[{"role": "user", "content": content}],
-        )
-        raw_out = (resp.choices[0].message.content or "").strip()
-        json_match = re.search(r"\{.*\}", raw_out, re.DOTALL)
-        if not json_match:
-            return base_record
-        parsed = json.loads(json_match.group(0))
-        return base_record.model_copy(
-            update={
-                "invoice_code": str(parsed.get("invoice_code") or base_record.invoice_code),
-                "invoice_number": str(parsed.get("invoice_number") or base_record.invoice_number),
-                "issue_date": _normalize_date_str(str(parsed.get("issue_date") or "")) or base_record.issue_date,
-                "buyer_name": str(parsed.get("buyer_name") or base_record.buyer_name),
-                "buyer_tax_id": str(parsed.get("buyer_tax_id") or base_record.buyer_tax_id),
-                "seller_name": str(parsed.get("seller_name") or base_record.seller_name),
-                "item_name": str(parsed.get("item_name") or base_record.item_name),
-                "category": infer_category(
-                    str(parsed.get("seller_name") or ""),
-                    explicit=str(parsed.get("category") or base_record.category),
-                ),
-                "amount_excl_tax": float(parsed.get("amount_excl_tax") or base_record.amount_excl_tax),
-                "tax_amount": float(parsed.get("tax_amount") or base_record.tax_amount),
-                "total_amount": float(parsed.get("total_amount") or base_record.total_amount),
-                "extract_source": "ai",
-                "confidence": 0.96,
-            }
-        )
-    except Exception as exc:
-        logger.warning("AI invoice extraction failed (%s); falling back to rule parser.", exc)
+    res = gw.extract_invoice_structured(
+        invoice_text=raw_text,
+        fallback_schema=fallback_schema,
+        image_bytes=image_bytes,
+    )
+    if res.source not in {"ai", "cache"}:
         return base_record
+
+    parsed = res.data
+    return base_record.model_copy(
+        update={
+            "invoice_code": parsed.invoice_code or base_record.invoice_code,
+            "invoice_number": parsed.invoice_number or base_record.invoice_number,
+            "issue_date": _normalize_date_str(parsed.issue_date) or base_record.issue_date,
+            "buyer_name": parsed.buyer_name or base_record.buyer_name,
+            "buyer_tax_id": parsed.buyer_tax_id or base_record.buyer_tax_id,
+            "seller_name": parsed.seller_name or base_record.seller_name,
+            "item_name": parsed.item_name or base_record.item_name,
+            "category": infer_category(parsed.seller_name, explicit=parsed.category or base_record.category),
+            "amount_excl_tax": parsed.amount_excl_tax if parsed.amount_excl_tax > 0 else base_record.amount_excl_tax,
+            "tax_amount": parsed.tax_amount if parsed.tax_amount >= 0 else base_record.tax_amount,
+            "total_amount": parsed.total_amount if parsed.total_amount > 0 else base_record.total_amount,
+            "extract_source": res.source,
+            "confidence": 0.96,
+        }
+    )
 
 
 def extract_invoice_from_file(
     path: Path,
     llm_cfg: LlmConfig | None = None,
     thumb_dir: Path | None = None,
+    gateway: AiGateway | None = None,
 ) -> InvoiceRecord:
     """Read a PDF or image invoice file, generate PNG preview if needed, and extract structured fields."""
     raw_bytes = path.read_bytes()
@@ -241,4 +240,10 @@ def extract_invoice_from_file(
         file_hash=file_hash,
     )
     base_rec.thumbnail_url = thumb_url
-    return _try_llm_extract_invoice(extracted_text, thumb_bytes, llm_cfg, base_rec)
+    return _try_llm_extract_invoice(
+        extracted_text,
+        thumb_bytes,
+        llm_cfg,
+        base_rec,
+        gateway=gateway,
+    )

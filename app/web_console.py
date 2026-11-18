@@ -340,6 +340,7 @@ def get_state(
         "invoice_files": invoice_files,
         "doctor": run_doctor_checks(cfg),
         "storage_usage": get_storage_usage_mb(cfg.storage),
+        "ai_stats": db.get_ai_daily_stats(),
         "config_summary": {
             "headless": cfg.browser.headless,
             "timezone": cfg.timezone,
@@ -350,6 +351,15 @@ def get_state(
             "mock_base_url": cfg.connectors.mock_crm.base_url,
             "thresholds": cfg.thresholds.model_dump(),
             "retention": cfg.retention.model_dump(),
+            "llm": {
+                "enabled": cfg.llm.enabled,
+                "model": os.getenv("OPENAI_MODEL", "").strip() or cfg.llm.model,
+                "api_key_configured": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+                "daily_call_budget": cfg.llm.daily_call_budget,
+                "daily_token_budget": cfg.llm.daily_token_budget,
+                "cache_enabled": cfg.llm.cache_enabled,
+                "max_retries": cfg.llm.max_retries,
+            },
             "sources": [
                 {"id": s.id, "connector": s.connector, "role": s.role, "enabled": s.enabled}
                 for s in job_def.sources

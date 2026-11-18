@@ -820,6 +820,71 @@
       font-variant-numeric: tabular-nums;
     }
 
+    /* AI Provenance & Inline Diagnosis Drawer */
+    .ai-drawer-row td {
+      background: #F9F8F5;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+    }
+    .ai-drawer-box {
+      border-left: 3px solid var(--accent);
+      padding-left: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: var(--ink);
+    }
+    .ai-drawer-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-weight: 600;
+    }
+    .ai-drawer-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink-2);
+    }
+    .ai-toggle-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--accent);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 120ms ease-out, border-color 120ms ease-out;
+    }
+    .ai-toggle-btn:hover {
+      background: var(--accent-soft);
+      border-color: #B4CBF7;
+    }
+    .ai-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 10px 0 12px;
+    }
+    .ai-stat-cell {
+      background: #F9F8F5;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 8px 10px;
+    }
+    .ai-stat-k { font-size: 11.5px; color: var(--ink-muted); }
+    .ai-stat-v {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+    }
+
     /* Lightbox & Auth Dialog */
     dialog {
       border: 1px solid var(--border);
@@ -1337,6 +1402,14 @@
                 </div>
               </div>
 
+              <div class="panel" id="ai-telemetry-panel">
+                <div class="panel-title">
+                  <span>AI 网关运行遥测与预算控制</span>
+                  <span id="ai-mode-badge"></span>
+                </div>
+                <div id="ai-telemetry-body"></div>
+              </div>
+
               <div class="panel">
                 <div class="panel-title"><span>技术人员维护命令（日常使用无需操作）</span></div>
                 <pre class="code-box"># 首次在真实系统扫码/滑块登录并保存登录状态：
@@ -1445,6 +1518,8 @@ python main.py doctor</pre>
       recSearch: "",
       expFilter: "all",
       selectedInvoiceIdx: 0,
+      expandedChannels: {},
+      expandedReconcile: {},
       busy: false,
       timerHandle: null,
       liveSession: null,
@@ -1662,6 +1737,12 @@ python main.py doctor</pre>
       return t;
     }
 
+    function aiSourceBadge(source) {
+      if (source === "ai") return `<span class="badge badge-info">AI 生成</span>`;
+      if (source === "cache") return `<span class="badge badge-ok">缓存命中</span>`;
+      return `<span class="badge badge-neutral">规则兜底</span>`;
+    }
+
     function esc(v) {
       return String(v ?? "")
         .replace(/&/g, "&amp;")
@@ -1807,7 +1888,7 @@ python main.py doctor</pre>
       renderReportsAndCard(d.active_run, d.notify_card);
       renderAudit(d.runs, d.latest_run_steps);
       renderArtifacts(d.dropzone_files, d.screenshots);
-      renderOps(d.doctor, d.storage_usage, d.config_summary);
+      renderOps(d.doctor, d.storage_usage, d.config_summary, d.ai_stats);
     }
 
     function renderOverviewByWorkflow(run, activeMeta, fullState) {
@@ -1888,7 +1969,8 @@ python main.py doctor</pre>
         tableHtml = rows.map((inv, idx) => {
           const isOk = inv.status === "合规待提交";
           const isSel = idx === state.selectedInvoiceIdx;
-          const srcLabel = inv.extract_source === "ai" ? "AI 识别" : "规则解析";
+          const srcLabel = inv.extract_source === "ai" ? "AI 识别" : (inv.extract_source === "cache" ? "AI 缓存" : "规则解析");
+          const srcCls = inv.extract_source === "ai" ? "badge-info" : (inv.extract_source === "cache" ? "badge-ok" : "badge-neutral");
           const confPct = Math.round(Number(inv.confidence || 0) * 100);
           const shortTags = isOk
             ? `<span class="badge badge-ok">合规自动填报</span>`
@@ -1904,7 +1986,7 @@ python main.py doctor</pre>
                 <span class="badge badge-neutral" style="margin-top:2px;">${esc(inv.category)}</span>
               </td>
               <td class="nowrap">
-                <span class="badge ${inv.extract_source === "ai" ? "badge-info" : "badge-neutral"}">${srcLabel} ${confPct}%</span>
+                <span class="badge ${srcCls}">${srcLabel} ${confPct}%</span>
               </td>
               <td>${shortTags}</td>
             </tr>
@@ -1917,6 +1999,9 @@ python main.py doctor</pre>
         const thumbHtml = selected.thumbnail_url
           ? `<div class="inv-thumb-box" data-zoom-src="${esc(selected.thumbnail_url)}" data-zoom-title="${esc(selected.file_name)}"><img src="${esc(selected.thumbnail_url)}" alt="发票原件缩略图" /></div>`
           : "";
+        const selSrcBadge = selected.extract_source === "ai"
+          ? `<span class="badge badge-info">AI 识别</span>`
+          : (selected.extract_source === "cache" ? `<span class="badge badge-ok">AI 缓存命中</span>` : `<span class="badge badge-neutral">PDF 规则引擎解析</span>`);
         inspectorHtml = `
           ${thumbHtml}
           <div class="kv-grid">
@@ -1927,6 +2012,7 @@ python main.py doctor</pre>
             <div class="kv-k">销售方名称</div><div class="kv-v">${esc(selected.seller_name)}</div>
             <div class="kv-k">费用类别</div><div class="kv-v">${esc(selected.category)}（单笔上限 ${fmtMoney(selected.limit_amount)}）</div>
             <div class="kv-k">价税合计</div><div class="kv-v" style="font-weight:700;">${fmtMoney(selected.total_amount)} <span style="color:var(--ink-muted);font-weight:400;">(不含税 ${fmtMoney(selected.amount_excl_tax)} + 税 ${fmtMoney(selected.tax_amount)})</span></div>
+            <div class="kv-k">识别来源</div><div class="kv-v">${selSrcBadge} <span class="mono" style="color:var(--ink-muted);margin-left:6px;">置信度 ${Math.round(Number(selected.confidence || 0) * 100)}%</span></div>
             <div class="kv-k">审核状态</div><div class="kv-v">${selected.status === "合规待提交" ? '<span class="badge badge-ok">合规待自动提交</span>' : esc((selected.risk_reasons || []).join("；"))}</div>
           </div>
         `;
@@ -2091,11 +2177,13 @@ python main.py doctor</pre>
           const arrow = val > 0 ? "▲" : (val < 0 ? "▼" : "");
           dodHtml = `<span style="color:var(--${cls});font-weight:600;">${arrow} ${val.toFixed(1)}%</span>`;
         }
+        const diag = r.ai_diagnosis || null;
+        const isOpen = Boolean(diag && state.expandedChannels[r.channel]);
         const statusBadge = r.is_anomaly
-          ? `<div style="display:flex;flex-wrap:wrap;gap:4px;">${String(r.anomaly_reason || "异常").split(/;\s*/).filter(Boolean).map(msg => `<span class="badge badge-err">${esc(msg)}</span>`).join("")}</div>`
+          ? `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;">${String(r.anomaly_reason || "异常").split(/[;；]\s*/).filter(Boolean).map(msg => `<span class="badge badge-err" style="white-space:normal;text-align:left;line-height:1.3;">${esc(msg)}</span>`).join("")}${diag ? `<button class="ai-toggle-btn" data-ch-toggle="${esc(r.channel)}" type="button">${isOpen ? "收起诊断 ▴" : "根因诊断 ▾"}</button>` : ""}</div>`
           : `<span class="badge badge-ok">正常</span>`;
 
-        return `
+        const mainRow = `
           <tr>
             <td class="nowrap" style="font-weight:600;">${esc(r.channel)}</td>
             <td class="r">${Number(r.order_count)}</td>
@@ -2113,6 +2201,27 @@ python main.py doctor</pre>
             <td>${statusBadge}</td>
           </tr>
         `;
+        if (!isOpen || !diag) return mainRow;
+        const urgCls = diag.urgency === "高" ? "badge-err" : (diag.urgency === "中" ? "badge-warn" : "badge-neutral");
+        const actionsHtml = (diag.recommended_actions || []).map(a => `<li>${esc(a)}</li>`).join("");
+        const drawerRow = `
+          <tr class="ai-drawer-row">
+            <td colspan="9">
+              <div class="ai-drawer-box">
+                <div class="ai-drawer-head">
+                  <span>渠道异常归因 · ${esc(r.channel)}</span>
+                  <span class="badge ${urgCls}">紧急度：${esc(diag.urgency || "中")}</span>
+                  ${aiSourceBadge(diag.source)}
+                  <span class="mono" style="font-size:11px;color:var(--ink-muted);font-weight:400;">${esc(diag.model || "")}${diag.latency_ms ? " · " + diag.latency_ms + "ms" : ""}</span>
+                </div>
+                <div><strong>根因判断：</strong>${esc(diag.root_cause || "")}</div>
+                ${diag.impact ? `<div><strong>经营影响：</strong>${esc(diag.impact)}</div>` : ""}
+                ${actionsHtml ? `<div><strong>建议排查与止损动作：</strong><ul class="ai-drawer-list">${actionsHtml}</ul></div>` : ""}
+              </div>
+            </td>
+          </tr>
+        `;
+        return mainRow + drawerRow;
       }).join("");
     }
 
@@ -2147,7 +2256,9 @@ python main.py doctor</pre>
       }
       tbody.innerHTML = items.map(i => {
         const finLabel = FIN_STATUS_LABELS[i.finance_status] || i.finance_status || "暂无记录";
-        return `
+        const attr = i.ai_attribution || null;
+        const isOpen = Boolean(attr && state.expandedReconcile[i.order_id]);
+        const mainRow = `
         <tr>
           <td class="mono">${esc(i.order_id)}</td>
           <td>${esc(i.channel)}</td>
@@ -2156,9 +2267,35 @@ python main.py doctor</pre>
           <td class="r" style="color:var(--err-ink);font-weight:600;">${fmtMoney(i.diff_amount)}</td>
           <td><span class="badge badge-warn">${esc(i.diff_type)}</span></td>
           <td title="${esc(i.finance_status)}">${esc(finLabel)}</td>
-          <td style="color:var(--ink-2);">${esc(i.action_advice)}</td>
+          <td style="color:var(--ink-2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+              <span>${esc(i.action_advice)}</span>
+              ${attr ? `<button class="ai-toggle-btn" data-rec-toggle="${esc(i.order_id)}" type="button">${isOpen ? "收起归因 ▴" : "归因清单 ▾"}</button>` : ""}
+            </div>
+          </td>
         </tr>
       `;
+        if (!isOpen || !attr) return mainRow;
+        const priCls = attr.priority === "P1" ? "badge-err" : (attr.priority === "P2" ? "badge-warn" : "badge-neutral");
+        const causesHtml = (attr.likely_causes || []).map(c => `<li>${esc(c)}</li>`).join("");
+        const stepsHtml = (attr.check_steps || []).map(s => `<li>${esc(s)}</li>`).join("");
+        const drawerRow = `
+          <tr class="ai-drawer-row">
+            <td colspan="8">
+              <div class="ai-drawer-box">
+                <div class="ai-drawer-head">
+                  <span>差异归因与核查清单 · 订单 <span class="mono">${esc(i.order_id)}</span></span>
+                  <span class="badge ${priCls}">${esc(attr.priority || "P2")} 优先级</span>
+                  ${aiSourceBadge(attr.source)}
+                  <span class="mono" style="font-size:11px;color:var(--ink-muted);font-weight:400;">${esc(attr.model || "")}${attr.latency_ms ? " · " + attr.latency_ms + "ms" : ""}</span>
+                </div>
+                ${causesHtml ? `<div><strong>可能成因：</strong><ul class="ai-drawer-list">${causesHtml}</ul></div>` : ""}
+                ${stepsHtml ? `<div><strong>建议核查步骤：</strong><ul class="ai-drawer-list">${stepsHtml}</ul></div>` : ""}
+              </div>
+            </td>
+          </tr>
+        `;
+        return mainRow + drawerRow;
       }).join("");
     }
 
@@ -2417,7 +2554,7 @@ python main.py doctor</pre>
       }
     }
 
-    function renderOps(doctor, usage, cfgSum) {
+    function renderOps(doctor, usage, cfgSum, aiStats) {
       const docBody = document.getElementById("doctor-tbody");
       docBody.innerHTML = (doctor || []).map(item => {
         const st = item["状态"];
@@ -2464,6 +2601,90 @@ python main.py doctor</pre>
           </div>
         `;
       }).join("");
+
+      // AI Gateway Telemetry & Daily Budget Panel
+      const modeBadgeEl = document.getElementById("ai-mode-badge");
+      const aiBodyEl = document.getElementById("ai-telemetry-body");
+      if (modeBadgeEl && aiBodyEl) {
+        const llm = cfgSum.llm || {};
+        const st = aiStats || {};
+        const calls = Number(st.calls_today || 0);
+        const callBudget = Math.max(1, Number(llm.daily_call_budget || 60));
+        const tokens = Number(st.tokens_today || 0);
+        const tokBudget = Math.max(1, Number(llm.daily_token_budget || 80000));
+        const hits = Number(st.cache_hits_today || 0);
+        const hitRate = Number(st.cache_hit_rate_pct || 0);
+        const fallbacks = Number(st.rule_fallbacks_today || 0);
+        const cacheTotal = Number(st.cache_entries_total || 0);
+
+        if (!llm.enabled) {
+          modeBadgeEl.innerHTML = `<span class="badge badge-neutral">规则引擎模式 (未开启 LLM)</span>`;
+        } else if (!llm.api_key_configured) {
+          modeBadgeEl.innerHTML = `<span class="badge badge-warn">未配置 API 密钥 · 自动规则兜底</span>`;
+        } else {
+          modeBadgeEl.innerHTML = `<span class="badge badge-info">AI 网关在线 · ${esc(llm.model || "")}</span>`;
+        }
+
+        const callPct = Math.min(100, Math.round((calls / callBudget) * 100));
+        const tokPct = Math.min(100, Math.round((tokens / tokBudget) * 100));
+        const taskLabels = {
+          anomaly_explain: "异常渠道归因",
+          reconcile_attribute: "对账差异核查",
+          daily_summary: "日报运营建议",
+          invoice_extract: "发票结构化识别",
+        };
+        const recent = Array.isArray(st.recent_events) ? st.recent_events.slice(0, 4) : [];
+        const recentHtml = recent.length > 0
+          ? `<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+               <div style="font-size:11.5px;color:var(--ink-muted);margin-bottom:6px;font-weight:600;">最近 AI 网关调度记录</div>
+               ${recent.map(ev => `
+                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0;gap:8px;">
+                   <span style="color:var(--ink-2);">${esc(taskLabels[ev.task] || ev.task)}</span>
+                   <span style="display:inline-flex;align-items:center;gap:6px;">
+                     ${aiSourceBadge(ev.source)}
+                     <span class="mono" style="font-size:11px;color:var(--ink-muted);">${Number(ev.latency_ms || 0).toFixed(0)}ms</span>
+                   </span>
+                 </div>
+               `).join("")}
+             </div>`
+          : `<div style="font-size:12px;color:var(--ink-muted);margin-top:8px;">今日尚无 AI/规则网关调度记录；运行任意流程后将实时统计命中率与配额消耗。</div>`;
+
+        aiBodyEl.innerHTML = `
+          <div class="ai-stat-grid">
+            <div class="ai-stat-cell">
+              <div class="ai-stat-k">今日实调次数 / 配额上限</div>
+              <div class="ai-stat-v">${calls} / ${callBudget} 次</div>
+            </div>
+            <div class="ai-stat-cell">
+              <div class="ai-stat-k">今日 Token 消耗 / 预算</div>
+              <div class="ai-stat-v">${tokens.toLocaleString()} / ${tokBudget.toLocaleString()}</div>
+            </div>
+            <div class="ai-stat-cell">
+              <div class="ai-stat-k">语义缓存命中 (省费用)</div>
+              <div class="ai-stat-v">${hits} 次 · ${hitRate.toFixed(1)}%</div>
+            </div>
+            <div class="ai-stat-cell">
+              <div class="ai-stat-k">确定性规则兜底 / 总缓存库</div>
+              <div class="ai-stat-v">${fallbacks} 次 / ${cacheTotal} 条</div>
+            </div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+              <span>每日调用次数配额占用</span>
+              <span class="mono" style="color:var(--ink-2);">${callPct}%</span>
+            </div>
+            <div class="wf-track"><div class="wf-bar" style="width:${Math.max(2, callPct)}%"></div></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+              <span>每日 Token 预算占用</span>
+              <span class="mono" style="color:var(--ink-2);">${tokPct}%</span>
+            </div>
+            <div class="wf-track"><div class="wf-bar" style="width:${Math.max(2, tokPct)}%"></div></div>
+          </div>
+          ${recentHtml}
+        `;
+      }
     }
 
     function openAuthDialog() {
@@ -2595,6 +2816,20 @@ python main.py doctor</pre>
     });
     document.getElementById("rec-search").addEventListener("input", e => {
       state.recSearch = e.target.value;
+      renderReconcile(state.data?.active_run);
+    });
+    document.getElementById("ch-tbody").addEventListener("click", e => {
+      const btn = e.target.closest("[data-ch-toggle]");
+      if (!btn) return;
+      const ch = btn.dataset.chToggle;
+      state.expandedChannels[ch] = !state.expandedChannels[ch];
+      renderChannels(state.data?.active_run);
+    });
+    document.getElementById("rec-tbody").addEventListener("click", e => {
+      const btn = e.target.closest("[data-rec-toggle]");
+      if (!btn) return;
+      const oid = btn.dataset.recToggle;
+      state.expandedReconcile[oid] = !state.expandedReconcile[oid];
       renderReconcile(state.data?.active_run);
     });
 

@@ -195,7 +195,7 @@ def audit_invoices(
             "value": f"{avg_conf:.1f}%",
             "sub": (
                 "AI+规则协同"
-                if any(a.record.extract_source == "ai" for a in audited)
+                if any(a.record.extract_source in {"ai", "cache"} for a in audited)
                 else "PDF 规则精准解析"
             ),
             "tone": "",

@@ -105,6 +105,10 @@ class NotifierConfig(BaseModel):
 class LlmConfig(BaseModel):
     enabled: bool = False
     model: str = "gpt-4o-mini"
+    daily_call_budget: int = 60
+    daily_token_budget: int = 80000
+    cache_enabled: bool = True
+    max_retries: int = 1
 
 
 class RetentionConfig(BaseModel):

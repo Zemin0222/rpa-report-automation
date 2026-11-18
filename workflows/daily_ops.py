@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from ai.gateway import AiGateway
 from connectors.mock_oa_submitter import MockOaSubmitter
 from connectors.registry import apply_column_mapping, build_connector
 from core.config_loader import AppConfig, JobDefinition, SourceSpec
@@ -176,7 +177,30 @@ class DailyOpsWorkflow:
             prev_channel_sales=prev_sales,
             finance_df=finance_df,
         )
-        summary_text = build_summary(etl, ctx.cfg.llm)
+        gateway = AiGateway(ctx.cfg.llm, db=ctx.db)
+        trend_rows = ctx.db.get_daily_trend(ctx.job_def.job_name, limit_days=14)
+        summary_text = build_summary(etl, ctx.cfg.llm, gateway=gateway)
+
+        for ch in etl.kpis.get("channels", []):
+            if ch.get("is_anomaly"):
+                diag = gateway.explain_anomaly(ch, trend_context=trend_rows)
+                ch["ai_diagnosis"] = {
+                    **diag.data.model_dump(),
+                    "source": diag.source,
+                    "model": diag.model,
+                    "latency_ms": diag.latency_ms,
+                }
+
+        for rec in etl.kpis.get("reconcile_items", []):
+            attr = gateway.attribute_reconcile_diff(rec)
+            rec["ai_attribution"] = {
+                **attr.data.model_dump(),
+                "source": attr.source,
+                "model": attr.model,
+                "latency_ms": attr.latency_ms,
+            }
+
+        etl.kpis["ai_stats"] = ctx.db.get_ai_daily_stats()
         reconcile_diff_count = int(etl.reconcile_summary.get("discrepancy_count", 0))
         total_rows = len(orders_df) + len(ads_df) + len(finance_df) + len(drop_df)
 

@@ -122,6 +122,10 @@ notifier:
 llm:
   enabled: false
   model: "gpt-4o-mini"
+  daily_call_budget: 60
+  daily_token_budget: 80000
+  cache_enabled: true
+  max_retries: 1
 
 retention:
   downloads_days: 14

@@ -83,7 +83,7 @@ def generate_expense_excel_report(
             r.amount_excl_tax,
             r.tax_amount,
             r.total_amount,
-            "AI大模型" if r.extract_source == "ai" else "规则解析",
+            "AI大模型" if r.extract_source == "ai" else ("AI缓存" if r.extract_source == "cache" else "规则解析"),
             f"{r.confidence * 100:.0f}%",
         ]
         for c_idx, v in enumerate(vals, start=1):
