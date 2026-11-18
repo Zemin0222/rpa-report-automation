@@ -61,6 +61,9 @@ class SourceSpec(BaseModel):
 
 class JobDefinition(BaseModel):
     job_name: str = "daily_ops_report"
+    workflow: str = "daily_ops_report"
+    title: str = ""
+    description: str = ""
     enabled: bool = True
     daily_cron: str = "30 8 * * *"
     weekly_cron: str = "0 9 * * 1"

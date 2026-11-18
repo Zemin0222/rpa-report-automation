@@ -44,6 +44,9 @@ connectors:
 
 jobs:
   - job_name: daily_ops_report
+    workflow: daily_ops_report
+    title: "每日全渠道对账与 OA 日报"
+    description: "跨系统抓取 CRM 订单、广告消耗与财务结算 PDF，完成三方对账并自动填写 OA 日报"
     enabled: true
     daily_cron: "30 8 * * *"
     weekly_cron: "0 9 * * 1"

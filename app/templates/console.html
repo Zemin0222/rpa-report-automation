@@ -1020,6 +1020,7 @@
         <div class="field-group">
           <label class="field-label" for="job-select">自动化流程</label>
           <select id="job-select" class="select"></select>
+          <div class="field-hint" id="job-desc"></div>
         </div>
         <div class="field-group">
           <label class="field-label" for="run-date-input">统计哪天的数据</label>
@@ -1079,6 +1080,7 @@
         <section id="view-overview" class="view active">
           <div class="kpi-ledger" id="kpi-ledger"></div>
 
+          <div id="overview-daily-ops">
           <div class="section-block">
             <div class="section-head">
               <h2>渠道投放与销售明细<span class="section-meta" id="ch-meta"></span></h2>
@@ -1141,6 +1143,9 @@
               </table>
             </div>
           </div>
+          </div>
+
+          <div id="overview-generic" style="display:none;"></div>
         </section>
 
         <!-- View 2: Trends & Reports -->
@@ -1695,9 +1700,20 @@ python main.py doctor</pre>
       const d = state.data;
       if (!d) return;
 
-      // Sidebar controls
+      // Sidebar controls (prefer workflow metadata returned by /api/state)
       const jobSel = document.getElementById("job-select");
-      jobSel.innerHTML = d.jobs.map(j => `<option value="${esc(j)}" ${j === d.selected_job ? "selected" : ""}>${esc(JOB_LABELS[j] || j)}</option>`).join("");
+      const metaList = (d.jobs_meta && d.jobs_meta.length > 0)
+        ? d.jobs_meta
+        : d.jobs.map(j => ({ job_name: j, title: JOB_LABELS[j] || j, description: "" }));
+      jobSel.innerHTML = metaList.map(m =>
+        `<option value="${esc(m.job_name)}" ${m.job_name === d.selected_job ? "selected" : ""}>${esc(m.title || JOB_LABELS[m.job_name] || m.job_name)}</option>`
+      ).join("");
+      const activeMeta = metaList.find(m => m.job_name === d.selected_job) || d.active_workflow || {};
+      const jobDescEl = document.getElementById("job-desc");
+      if (jobDescEl) {
+        jobDescEl.textContent = activeMeta.description || "";
+        jobDescEl.style.display = activeMeta.description ? "block" : "none";
+      }
 
       const dateInput = document.getElementById("run-date-input");
       if (!dateInput.value) dateInput.value = d.today;
@@ -1719,14 +1735,47 @@ python main.py doctor</pre>
         <button class="date-pill ${dt === d.selected_date ? "active" : ""}" data-date="${esc(dt)}" type="button">${esc(dt.slice(5))}</button>
       `).join("");
 
-      renderKpiLedger(d.active_run);
-      renderChannels(d.active_run);
-      renderReconcile(d.active_run);
+      renderOverviewByWorkflow(d.active_run, activeMeta);
       renderTrends(d.trend, d.config_summary.thresholds.min_roi);
       renderReportsAndCard(d.active_run, d.notify_card);
       renderAudit(d.runs, d.latest_run_steps);
       renderArtifacts(d.dropzone_files, d.screenshots);
       renderOps(d.doctor, d.storage_usage, d.config_summary);
+    }
+
+    function renderOverviewByWorkflow(run, activeMeta) {
+      const viewType = (run && run.view_type) || (activeMeta && activeMeta.view_type) || "daily_ops";
+      const dailyWrap = document.getElementById("overview-daily-ops");
+      const genWrap = document.getElementById("overview-generic");
+
+      if (viewType === "daily_ops") {
+        if (dailyWrap) dailyWrap.style.display = "block";
+        if (genWrap) genWrap.style.display = "none";
+        renderKpiLedger(run);
+        renderChannels(run);
+        renderReconcile(run);
+        return;
+      }
+
+      if (dailyWrap) dailyWrap.style.display = "none";
+      if (genWrap) genWrap.style.display = "block";
+      const kpiEl = document.getElementById("kpi-ledger");
+      const k = (run && run.kpi) || {};
+      const cards = Array.isArray(k.cards) ? k.cards : [];
+      if (cards.length > 0) {
+        kpiEl.innerHTML = cards.slice(0, 5).map(c => `
+          <div class="kpi-cell">
+            <div class="kpi-label">${esc(c.label || "")}</div>
+            <div class="kpi-val ${esc(c.tone || "")}">${esc(c.value ?? "-")}</div>
+            <div class="kpi-sub">${esc(c.sub || "")}</div>
+          </div>
+        `).join("");
+      } else {
+        kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">暂无「${esc(activeMeta?.title || viewType)}」的已完成数据，请点击左侧「观看机器人实时操作」或「后台静默跑批」。</div>`;
+      }
+      genWrap.innerHTML = run && run.summary_text
+        ? `<div class="panel"><div class="panel-title"><span>业务处理结果摘要 (${esc(run.biz_date)})</span></div><pre class="summary-pre">${esc(run.summary_text)}</pre></div>`
+        : "";
     }
 
     function renderKpiLedger(run) {

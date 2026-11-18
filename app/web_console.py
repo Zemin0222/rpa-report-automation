@@ -26,6 +26,7 @@ from core.live_observer import LiveRunTracker
 from core.pipeline import run_backfill_pipeline, run_daily_pipeline
 from notifiers.webhook import send_failure_alert
 from storage.state_db import StateDB
+from workflows.registry import get_workflow, list_workflows
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 CONSOLE_HTML_PATH = TEMPLATES_DIR / "console.html"
@@ -169,9 +170,30 @@ def get_state(
     cfg = load_config()
     db = StateDB(cfg.storage.db_path)
 
-    available_jobs = [j.job_name for j in cfg.jobs] if cfg.jobs else [cfg.job_name]
+    job_objs = cfg.jobs if cfg.jobs else [cfg.get_job()]
+    available_jobs = [j.job_name for j in job_objs]
     selected_job = job_name if (job_name and job_name in available_jobs) else available_jobs[0]
     job_def = cfg.get_job(selected_job)
+
+    jobs_meta: list[dict[str, Any]] = []
+    for jd in job_objs:
+        try:
+            wf_obj = get_workflow(jd.workflow)
+            wf_title, wf_desc, wf_view = wf_obj.title, wf_obj.description, wf_obj.view_type
+        except ValueError:
+            wf_title, wf_desc, wf_view = jd.job_name, "", "generic"
+        jobs_meta.append(
+            {
+                "job_name": jd.job_name,
+                "workflow": jd.workflow,
+                "title": jd.title or wf_title,
+                "description": jd.description or wf_desc,
+                "view_type": wf_view,
+                "enabled": jd.enabled,
+            }
+        )
+
+    active_wf_meta = next((m for m in jobs_meta if m["job_name"] == selected_job), jobs_meta[0])
 
     all_runs = db.list_recent_runs(limit=80)
     job_runs = [r for r in all_runs if r.get("job_name") == selected_job]
@@ -208,6 +230,8 @@ def get_state(
             active_run_payload = {
                 "run_id": int(matched_run["id"]),
                 "biz_date": selected_date,
+                "workflow_key": active_wf_meta["workflow"],
+                "view_type": active_wf_meta["view_type"],
                 "started_at": matched_run.get("started_at"),
                 "duration_sec": float(matched_run.get("duration_sec") or 0.0),
                 "row_count": int(matched_run.get("row_count") or 0),
@@ -273,6 +297,17 @@ def get_state(
     return {
         "today": date.today().isoformat(),
         "jobs": available_jobs,
+        "jobs_meta": jobs_meta,
+        "workflows": [
+            {
+                "key": w.key,
+                "title": w.title,
+                "description": w.description,
+                "view_type": w.view_type,
+            }
+            for w in list_workflows()
+        ],
+        "active_workflow": active_wf_meta,
         "selected_job": selected_job,
         "available_dates": available_dates,
         "selected_date": selected_date,
